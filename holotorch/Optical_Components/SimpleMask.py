@@ -23,13 +23,14 @@ class SimpleMask(AbstractMask):
             tensor_dimension : TensorDimension               = None,
             init_type : INIT_TYPE                            = INIT_TYPE.ZEROS,
             mask_model_type     : MASK_MODEL_TYPE            = MASK_MODEL_TYPE.REAL,
-            mask_forward_type        : MASK_FORWARD_TYPE     = MASK_FORWARD_TYPE.MULTIPLICATIVE
+            mask_forward_type        : MASK_FORWARD_TYPE     = MASK_FORWARD_TYPE.MULTIPLICATIVE,
+            mask_opt                                         = True
             ) -> None:
         super().__init__()
         
         self.add_attribute('mask')
         
-        self.mask_opt = True
+        self.mask_opt = mask_opt
         
         self.tensor_dimension = tensor_dimension
 
@@ -51,11 +52,11 @@ class SimpleMask(AbstractMask):
         self.spacing = None
         
     def forward(self, field : ElectricField) -> ElectricField:
-
+        tempMask = self.mask.to(field.data.device)
         if self.mask_forward_type is MASK_FORWARD_TYPE.MULTIPLICATIVE:
-            new_field = field.data * self.mask
+            new_field = field.data * tempMask
         elif self.mask_forward_type is MASK_FORWARD_TYPE.ADDITIVE:
-            new_field = field.data + self.mask
+            new_field = field.data + tempMask
 
         field = ElectricField(
             data        = new_field,

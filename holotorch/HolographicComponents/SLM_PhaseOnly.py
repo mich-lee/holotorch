@@ -13,6 +13,8 @@
 from __future__ import annotations
 import torch
 
+from pathlib import Path
+
 from holotorch.CGH_Datatypes.ElectricField import ElectricField
 from holotorch.utils.Enumerators import *
 from holotorch.utils.Dimensions import BTPCHW, TensorDimension, BTCHW
@@ -25,20 +27,27 @@ class SLM_PhaseOnly(Modulator_Container):
         CGH_Component (_type_): _description_
     """
       
-    def __init__(self,
-            tensor_dimension : TensorDimension,
-            feature_size    : float,
-            n_slm_batches                   = 1,
-            replicas :int               = 1,
-            pixel_fill_ratio: float     = 1.0,                  
-            pixel_fill_ratio_opt: bool  = False,     
-            init_type       : ENUM_SLM_INIT = None,
-            init_variance   : float = 0,
-            FLAG_optimize   : bool          = True,
-            slm_directory : str         = ".slm",
-            slm_id : int                = 0,
-            store_on_gpu                = False,
-            ):
+    def __init__(	self,
+                    tensor_dimension 		: TensorDimension,
+                    feature_size			: float,
+                    n_slm_batches			= 1,
+                    replicas				: int = 1,
+                    pixel_fill_ratio		: float = 1.0,
+                    pixel_fill_ratio_opt	: bool  = False,
+                    init_type				: ENUM_SLM_INIT = None,
+                    init_variance			: float = 0,
+                    FLAG_optimize			: bool = True,
+                    slm_directory			: str = ".slm",
+                    slm_id					: int = 0,
+                    static_slm				= False,
+                    static_slm_data_path	= None,
+                    store_on_gpu			= False,
+                    device					: torch.device = None,
+                ):
+
+        self.static_slm = static_slm
+        self.static_slm_data_path = static_slm_data_path
+        self.device = device
         
         super().__init__(
             tensor_dimension            = tensor_dimension,
@@ -55,22 +64,28 @@ class SLM_PhaseOnly(Modulator_Container):
         )
     
     @classmethod
-    def create_slm(cls,
-            height  : int,
-            width   : int, 
-            feature_size    : float,
-            replicas :int               = 1,
-            pixel_fill_ratio: float     = 1.0,                  
-            pixel_fill_ratio_opt: bool  = False,     
-            init_type       : ENUM_SLM_INIT = None,
-            init_variance   : float = 0,
-            FLAG_optimize   : bool          = True,
-            n_batch  : int = 1, # Total number of images for Modualator_Container
-            n_time   : int = 1,
-            n_channel : int = 1,
-            n_slm_batches                   = 1,
-        ) -> SLM_PhaseOnly:
-                
+    def create_slm(	cls,
+                    height					: int,
+                    width					: int,
+                    feature_size			: float,
+                    replicas				: int = 1,
+                    pixel_fill_ratio		: float = 1.0,
+                    pixel_fill_ratio_opt	: bool = False,
+                    init_type       		: ENUM_SLM_INIT = None,
+                    init_variance   		: float = 0,
+                    FLAG_optimize   		: bool = True,	# This parameter does not seem to do anything (at least as of 9/2/2022).
+                                                            # The SLM_PhaseOnly class has FLAG_optimize as an argument to its initializer, but does not appear to use it.
+                    n_batch  				: int = 1, # Total number of images for Modualator_Container
+                    n_time   				: int = 1,
+                    n_channel 				: int = 1,
+                    n_slm_batches			: int = 1,
+                    slm_directory			: str = '.slm',
+                    static_slm				: bool = False,
+                    static_slm_data_path	: Path = None,
+                    store_on_gpu            : bool = False,
+                    device					: torch.device = None,
+                ) -> SLM_PhaseOnly:
+
         SLM_container_dimension = BTCHW(
             n_batch         = n_batch, # Total number of images for Modualator_Container
             n_time          = n_time,
@@ -78,17 +93,22 @@ class SLM_PhaseOnly(Modulator_Container):
             height          = height,
             width           = width
         )
-        
+
         return SLM_PhaseOnly(
             tensor_dimension = SLM_container_dimension,
             n_slm_batches = n_slm_batches,
             feature_size    = feature_size,
             replicas  = replicas,
-            pixel_fill_ratio = pixel_fill_ratio,                  
-            pixel_fill_ratio_opt = pixel_fill_ratio_opt,     
+            pixel_fill_ratio = pixel_fill_ratio,
+            pixel_fill_ratio_opt = pixel_fill_ratio_opt,
             init_type     = init_type,
             init_variance  = init_variance,
             FLAG_optimize  = FLAG_optimize,
+            slm_directory = slm_directory,
+            static_slm = static_slm,
+            static_slm_data_path = static_slm_data_path,
+            store_on_gpu = store_on_gpu,
+            device = device
         )
             
     def forward(self,

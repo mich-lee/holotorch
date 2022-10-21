@@ -13,7 +13,17 @@
 
 
 from __future__ import print_function
+
+import numpy as np
 import torch
+import matplotlib.pyplot as plt
+
+import copy
+import re
+
+# Image wranglers
+from PIL import Image
+
 import warnings
 from typing import Union
 
@@ -21,6 +31,7 @@ import holotorch.utils.transformer_6d_4d as transformer_6d_4d
 
 warnings.filterwarnings("ignore", category=DeprecationWarning) 
 warnings.filterwarnings("ignore", category=UserWarning) 
+
 
 def replace_bkwd(fwd: torch.Tensor, bkwd: torch.Tensor):
     new         = bkwd.clone()  # contains backwardFn from bkwd
@@ -174,6 +185,166 @@ def perform_ft(input, delta=1, norm = 'ortho', pad = False, flag_ifft : bool = F
     return out
         
 
+def print_cuda_memory_usage(device : torch.device, printShort = False):
+	gpu_mem_allocated = torch.cuda.memory_allocated(device)
+	gpu_mem_reserved = torch.cuda.memory_reserved(device)
+	gpu_mem_total = torch.cuda.get_device_properties(device).total_memory
+	if not printShort:
+		gpu_info_printout_lines = torch.cuda.memory_summary(device=device,abbreviated=True).split('\n')
+		gpu_info_printout_str = '\n'.join([gpu_info_printout_lines[i] for i in [0,1,4,5,6,7,11,17,26]])
+		print(gpu_info_printout_str)
+		print('  Memory Usage (Reserved): %.2f GB / %.2f GB  -  %.2f%%' % (gpu_mem_reserved/(1024**3), gpu_mem_total/(1024**3), (gpu_mem_reserved/gpu_mem_total)*100))
+	else:
+		print('  Allocated: %.2f GB\tReserved: %.2f GB\tTotal: %.2f GB' % (gpu_mem_allocated/(1024**3), gpu_mem_reserved/(1024**3), gpu_mem_total/(1024**3)))
 
 
+def get_tensor_size_bytes(tensorInput : torch.Tensor):
+	return tensorInput.nelement() * tensorInput.element_size()
 
+
+def generateGrid(res, deltaX, deltaY, centerGrids = True, centerAroundZero = True, device=None):
+	if (torch.is_tensor(deltaX)):
+		deltaX = copy.deepcopy(deltaX).squeeze().to(device=device)
+	if (torch.is_tensor(deltaY)):
+		deltaY = copy.deepcopy(deltaY).squeeze().to(device=device)
+
+	if (centerGrids):
+		if (centerAroundZero):
+			xCoords = torch.linspace(-((res[0] - 1) // 2), (res[0] - 1) // 2, res[0]).to(device=device) * deltaX
+			yCoords = torch.linspace(-((res[1] - 1) // 2), (res[1] - 1) // 2, res[1]).to(device=device) * deltaY
+		else:
+			xCoords = (torch.linspace(0, res[0] - 1, res[0]) - (res[0] // 2)).to(device=device) * deltaX
+			yCoords = (torch.linspace(0, res[1] - 1, res[1]) - (res[1] // 2)).to(device=device) * deltaY
+	else:
+		xCoords = torch.linspace(0, res[0] - 1, res[0]).to(device=device) * deltaX
+		yCoords = torch.linspace(0, res[1] - 1, res[1]).to(device=device) * deltaY
+
+	xGrid, yGrid = torch.meshgrid(xCoords, yCoords)
+
+	return xGrid, yGrid
+
+
+# Resizes image while keeping its aspect ratio.  Will make the resized image as big as possible without
+# exceeding the resolution set by 'targetResolution'.
+#	- For example, if the target resolution is 600x400 pixels, a 200x200 pixel input image will be resized to 400x400 pixels.
+def fit_image_to_resolution(inputImage, targetResolution):
+	def getNumChannels(shape):
+		if (len(shape) == 2):
+			return 1
+		elif (len(shape) == 3):
+			return shape[2]
+		else:
+			raise Exception("Unrecognized image data shape.")
+
+	inputImageAspectRatio = inputImage.size[0] / inputImage.size[1]
+	targetAspectRatio = targetResolution[1] / targetResolution[0]
+
+	if (targetAspectRatio == inputImageAspectRatio):
+		outputImage = inputImage.resize((targetResolution[1], targetResolution[0]))
+	elif (inputImageAspectRatio < targetAspectRatio):
+		# Width relatively undersized so should resize to match height
+		imageMag = targetResolution[0] / inputImage.size[1]																		# = (Target resolution height) / (Input image height)
+		imageMagWidth = np.int(np.floor(inputImage.size[0] * imageMag))															# = floor((Input image width) * imageMag)
+		resizedImageData = np.asarray(inputImage.resize((imageMagWidth, targetResolution[0])))									# Resize input image to match target resolution's height, then convert image to array
+		paddingOffset = (targetResolution[1] - imageMagWidth) // 2																# Calculate how much more width the target resolution has relative to the input image, divide that number by 2, and round down
+		numChannels = getNumChannels(resizedImageData.shape)
+		paddedImageData = np.zeros([targetResolution[0], targetResolution[1], numChannels])										# Initialize new array for image data (array indices represent height, width, and color/alpha channels respectively)
+		if (numChannels == 1):
+			resizedImageData = resizedImageData[:,:,None]
+		paddedImageData[:,paddingOffset:(paddingOffset+imageMagWidth),:] = resizedImageData										# Put resizedImageData array into paddedImageData, with the resizedImageData array being centered in the width dimension
+		if (numChannels == 1):
+			paddedImageData = np.squeeze(paddedImageData)
+			outputImage = Image.fromarray(paddedImageData.astype(np.uint8), mode='L')
+		else:
+			outputImage = Image.fromarray(paddedImageData.astype(np.uint8))														# Convert paddedImageData to an image object
+	else:
+		# Height relatively undersized so should resize to match width
+		imageMag = targetResolution[1] / inputImage.size[0]																		# = (Target resolution width) / (Input image width)
+		imageMagHeight = np.int(np.floor(inputImage.size[1] * imageMag))														# = floor((Input image height) * imageMag)
+		resizedImageData = np.asarray(inputImage.resize((targetResolution[1], imageMagHeight)))									# Resize input image to match target resolution's width, then convert image to array
+		paddingOffset = (targetResolution[0] - imageMagHeight) // 2																# Calculate how much more height the target resolution has relative to the input image, divide that number by 2, and round down
+		numChannels = getNumChannels(resizedImageData.shape)
+		paddedImageData = np.zeros([targetResolution[0], targetResolution[1], numChannels])										# Initialize new array for image data (array indices represent height, width, and color/alpha channels respectively)
+		if (numChannels == 1):
+			resizedImageData = resizedImageData[:,:,None]
+		paddedImageData[paddingOffset:(paddingOffset+imageMagHeight),:,:] = resizedImageData									# Put resizedImageData array into paddedImageData, with the resizedImageData array being centered in the height dimension
+		if (numChannels == 1):
+			paddedImageData = np.squeeze(paddedImageData)
+			outputImage = Image.fromarray(paddedImageData.astype(np.uint8), mode='L')
+		else:
+			outputImage = Image.fromarray(paddedImageData.astype(np.uint8))														# Convert paddedImageData to an image object
+
+	return outputImage
+
+
+def parseNumberAndUnitsString(str):
+	unitsMatches = re.findall('(nm)|(um)|(mm)|(cm)|(ms)|(us)|(ns)|(m)|(s)', str)
+	unitStrings = ['nm', 'um', 'mm', 'cm', 'ms', 'us', 'ns', 'm', 's']
+	unitTypes = ['spatial', 'spatial', 'spatial', 'spatial', 'time', 'time', 'time', 'spatial', 'time']
+	unitsMultipliers = [1e-9, 1e-6, 1e-3, 1e-2, 1e-3, 1e-6, 1e-9, 1, 1]
+	if (len(unitsMatches) > 1):
+		raise Exception("Invalid number string.")
+	elif (len(unitsMatches) == 0):
+		multiplier = 1
+		numStr = str
+		unitStr = ''
+		unitTypeStr = ''
+	else: # len(unitsMatches) == 1
+		unitStr = ''.join(list(unitsMatches[-1]))
+		unitIndex = unitStrings.index(unitStr)
+		multiplier = unitsMultipliers[unitIndex]
+		unitTypeStr = unitTypes[unitIndex]
+		numStr = str[0:-len(unitStr)]
+	try:
+		return float(numStr) * multiplier, unitStr, unitTypeStr
+	except:
+		raise Exception("Invalid number string.")
+
+
+# Not bothering to check for matching dimensions here
+def applyFilterSpaceDomain(h : torch.tensor, x : torch.tensor):
+	# Assumes h and x have the same size
+	Nx_old = int(x.shape[-2])
+	Ny_old = int(x.shape[-1])
+
+	pad_nx = int(Nx_old / 2)
+	pad_ny = int(Ny_old / 2)
+
+	# As of 9/2/2022, cannot rely on padding in ft2(...) function
+	# That function has the pad_nx and pad_ny arguments reversed in its call to torch.nn.functional.pad(...)
+	# Because of that, the x dimension (height) gets y's padding amount and vice-versa.
+	# Therefore, doing the padding here.
+	hPadded = torch.nn.functional.pad(h, (pad_ny,pad_ny,pad_nx,pad_nx), mode='constant', value=0)
+	xPadded = torch.nn.functional.pad(x, (pad_ny,pad_ny,pad_nx,pad_nx), mode='constant', value=0)
+	H = ft2(hPadded, pad=False)
+	X = ft2(xPadded, pad=False)
+
+	# The normalization on the FFTs of hPadded and xPadded get multiplied together.  This throws off the scaling.
+	rescaleFactor = np.sqrt(hPadded.shape[-2] * hPadded.shape[-1])
+
+	Y = (H * X) * rescaleFactor
+	y = ift2(Y)
+	y = y[..., pad_nx:(pad_nx+Nx_old), pad_ny:(pad_ny+Ny_old)]
+
+	return y
+
+
+def computeBandlimitingFilterSpaceDomain(f_x_max, f_y_max, Kx, Ky):
+	# Should be 4D T x C x H x W, thus ift2(...) can be used.
+	bandlimiting_Filter_Freq = torch.zeros_like(Kx)
+	bandlimiting_Filter_Freq[ ( torch.abs(Kx) < f_x_max) & (torch.abs(Ky) < f_y_max) ] = 1
+	bandlimiting_Filter_Space = ift2(bandlimiting_Filter_Freq)
+	bandlimiting_Filter_Space = bandlimiting_Filter_Space[None,:,None,:,:,:] # Expand from 4D to 6D (TCHW dimensions --> BTPCHW dimensions)
+	return bandlimiting_Filter_Space
+
+
+def check_tensors_broadcastable(a : torch.Tensor, b : torch.Tensor):
+	if not (isinstance(a,torch.Tensor) and isinstance(b,torch.Tensor)):
+		raise Exception("Error: Need tensor inputs for check_tensors_broadcastable(...).")
+	lenDiff = abs(len(a.shape) - len(b.shape))
+	for i in range(min(len(a.shape), len(b.shape)) - 1, -1, -1):
+		aInd = i + lenDiff*(len(a.shape) > len(b.shape))
+		bInd = i + lenDiff*(len(a.shape) < len(b.shape))
+		if not ((a.shape[aInd] == 1) or (b.shape[bInd] == 1) or (a.shape[aInd] == b.shape[bInd])):
+			return False
+	return True

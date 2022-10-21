@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 import matplotlib.pyplot as plt
 import shutil
+import warnings
 
 from holotorch.HolographicComponents.ValueContainer import ValueContainer
 from holotorch.utils.Dimensions import TensorDimension
@@ -75,6 +76,29 @@ class Modulator_Container(CGH_Component):
         # create the models
         super().__init__()
 
+        if ((tensor_dimension.batch % n_slm_batches) != 0):
+            raise Exception("Error: 'n_slm_batches' does not evenly divide the number of batches.")
+
+        if not (hasattr(self, 'static_slm')):
+            raise Exception("A subclass failed to set the 'static_slm' attribute.")
+        if not (hasattr(self, 'static_slm_data_path')):
+            raise Exception("A subclass failed to set the 'static_slm_data_path' attribute.")
+
+        if (self.static_slm == False):
+            if (self.static_slm_data_path is not None):
+                raise Exception("static_slm_data_path' is set, but static_slm is False.")
+        else:
+            if (self.static_slm_data_path is None):
+                raise Exception("'static_slm' is set to True, but 'static_slm_data_path' is not set.")
+            elif (not issubclass(type(self.static_slm_data_path), Path)):
+                raise Exception("'static_slm_data_path' must be a pathlib.Path object.")
+            elif not (self.static_slm_data_path.exists()):
+                raise Exception("The pathlib.Path object provided for 'static_slm_data_path' does not point to a valid path.")
+
+        self.input_arg_init_variance = init_variance
+        self.input_arg_init_type = init_type
+        self.input_arg_flag_complex = flag_complex
+
         # create the upsampler (defaults to identity operation)
         self.upsampler = SLM_Upsampler(replicas=replicas, 
                                         pixel_fill_ratio=pixel_fill_ratio,
@@ -113,7 +137,6 @@ class Modulator_Container(CGH_Component):
         else:
             init_function = self.init_on_disk
 
-        
         init_function(
                     batch_tensor_dimension = batch_tensor_dimension,
                     init_variance    = init_variance,
@@ -124,20 +147,23 @@ class Modulator_Container(CGH_Component):
                     images_per_batch    = images_per_batch,
                     n_slm_batches       = n_slm_batches
             )
+
+        if (self.static_slm):
+            self.load_all_slms_from_folder(self.static_slm_data_path)
         
         
     def init_on_gpu(
-            self,
-            batch_tensor_dimension  : TensorDimension,
-            init_variance           : float,
-            init_type               : ENUM_SLM_INIT,
-            flag_complex            : bool,    
-            slm_directory,
-            slm_id,
-            images_per_batch,
-            n_slm_batches
-    ):
-       
+                self,
+                batch_tensor_dimension  : TensorDimension,
+                init_variance           : float,
+                init_type               : ENUM_SLM_INIT,
+                flag_complex            : bool,
+                slm_directory,
+                slm_id,
+                images_per_batch,
+                n_slm_batches
+        ):
+
         for k in range(n_slm_batches):
             tmp_values : ValueContainer = ValueContainer(
                 tensor_dimension = batch_tensor_dimension,
@@ -145,59 +171,61 @@ class Modulator_Container(CGH_Component):
                 init_type        = init_type,
                 flag_complex     = flag_complex,
             )
-            
-        
+            if not (self.device is None):
+                tmp_values.data_tensor = tmp_values.data_tensor.to(self.device)
+                tmp_values.scale = tmp_values.scale.to(self.device)
             setattr(self,"slm" + str(k),tmp_values)
-            
+
         self.n_slm_batches = n_slm_batches
         self.current_batch_idx = 0
-            
-    
+
+
     def init_on_disk(self,
-            batch_tensor_dimension  : TensorDimension,
-            init_variance           : float,
-            init_type               : ENUM_SLM_INIT,
-            flag_complex            : bool,    
-            slm_directory,
-            slm_id,
-            images_per_batch,
-            n_slm_batches
-                     ):
-        
+        batch_tensor_dimension  : TensorDimension,
+        init_variance           : float,
+        init_type               : ENUM_SLM_INIT,
+        flag_complex            : bool,
+        slm_directory,
+        slm_id,
+        images_per_batch,
+        n_slm_batches
+                    ):
+
+        # Create a directory where temporary SLM data is stored.  Initializes self.tmp_dir
+        self.create_tmp_directory(tmp_name=slm_directory, slm_id = slm_id)
+
+        # Clear out files in the temporary SLM directory (that end in .pt)
+        self.clear_temp_slm_dir()
+
+        # Initializing a values container (needs to be initialized for self.set_images_per_batch(...) to work)
         self.values : ValueContainer = ValueContainer(
             tensor_dimension = batch_tensor_dimension,
             init_variance    = init_variance,
             init_type        = init_type,
             flag_complex     = flag_complex,
         )
-        
-        self.init_save_directory(
-            tmp_name            = slm_directory,
-            slm_id              = slm_id,
-            images_per_batch    = images_per_batch,
-            n_slm_batches       = n_slm_batches
-        )    
-        
 
-    def init_save_directory(self,
-                tmp_name : str,
-                slm_id   : int,
-                images_per_batch : int,
-                n_slm_batches : int,
-                ):
+        # Initializing field
+        self.n_slm_batches = n_slm_batches
 
-        # Create a tempory directory where data is stored
-        self.create_tmp_directory(tmp_name=tmp_name, slm_id = slm_id)
+        for k in range(n_slm_batches - 1, -1, -1):
+            with torch.no_grad():
+                # Updating batch-related fields in values container and generating new SLM data (which is contained in self.values.data_tensor).
+                self.values.set_images_per_batch(number_images_per_batch=images_per_batch)
 
-        # each slm model stores a batch of slm patterns for faster optimization
-        self.n_slm_batches = None
-        self.set_images_per_batch(number_images_per_batch=images_per_batch, number_slm_batches=n_slm_batches)
-        
-        
+                # NOTE that the self.values.data_tensor and self.values.scale tensors would have been computed on the CPU and will reside on the CPU at this point.
+                #	(Unless something changes after 9/8/2022)
+
+                # Saving the SLM data
+                self.save_single_slm(batch_idx=k)
+
+        # Moving tensors to a different device if necessary
+        if not (self.device is None):
+            self.values.to(self.device)
+
+        # Forcing the currently loaded SLM to be idx=0
         self.current_batch_idx = 0
-        # We need to save each SLM
-        for k in range(n_slm_batches):
-            self.save_single_slm(batch_idx=k)
+        self.load_single_slm(batch_idx=0)	# This line is technically not necessary because 'k' ends up as 0 in the loop 'for k in range(n_slm_batches - 1, -1, -1)'
 
     def move_tmp_save_folder(self,
              slm_id : int or str,
@@ -408,38 +436,62 @@ class Modulator_Container(CGH_Component):
     def save_single_slm(self,
                         batch_idx :int  = None,
                         folder : str = None,
-                        filename : str = None,
+                        filename : str = None
                         ):
+        if (hasattr(self, 'current_batch_idx')):
+            if batch_idx == None:
+                batch_idx = self.current_batch_idx
+            if ((batch_idx != self.current_batch_idx) and (not self.store_on_gpu)):
+                self.load_single_slm(batch_idx=batch_idx)
+        # else:
+        # 	# Reaching this point means class is still initializing
+        # 	pass
 
-        if batch_idx == None:
-            batch_idx = self.current_batch_idx
         slm_path = self._create_file_path(batch_idx = batch_idx, folder = folder, filename=filename)
-       
-        state_dict = self.values.state_dict()
-        # there is only one slm object  
-        torch.save(state_dict, slm_path)
-        
 
-    def load_single_slm(self,
-                        batch_idx :int = 0,
-                        folder : str = None,
-                        filename : str = None,
-                        flag_save_current = True,
-                         ):
-        
-        if self.store_on_gpu:
-            load_function = self.load_single_slm_gpu
+        if (self.store_on_gpu):
+            tempValues = self.load_single_slm(batch_idx=batch_idx)
+            state_dict = tempValues.state_dict()
         else:
-            load_function = self.load_single_slm_disk
-        
-        return load_function(
-            batch_idx = batch_idx,
-            folder=folder,
-            filename=filename,
-            flag_save_current=flag_save_current
-        )
+            # If 'current_batch_idx' was not set, then the class is still initializing.  This means that whatever is stored in self.values are the initialized values, which means that they should just be saved.
+            # If 'current_batch_idx' was set, then either the correct values were already loaded before this method was called, or the correct values would have been loaded earlier in this method.
+            # Therefore, one can just have this single line.
+            state_dict = self.values.state_dict()
 
-    def load_single_slm_gpu(self,
+        # If not static_slm, save.  If folder is not none, then assume that the user is explicitly trying to save an SLM, rather than the code trying to save a temporary SLM file.
+        if (not self.static_slm) or (folder is not None):
+            torch.save(state_dict, slm_path)
+
+
+    def load_single_slm(	self,
+                            batch_idx,
+                            folder : str = None,
+                            filename : str = None,
+                            flag_save_current = True,
+                        ):
+        if ((filename is not None) or (folder is not None)):
+            raise Exception("Use case not covered.")
+        else:
+            if self.store_on_gpu:
+                load_function = self.load_single_slm_gpu		# Nothing different needs to be done
+            elif not self.static_slm:
+                load_function = self.load_single_slm_disk
+            else:
+                folder = self.static_slm_data_path.resolve()		# The call to resolve() is technically not needed.  Even though self.static_slm_data_path should be a pathlib.Path object and not a string, the functions that argument gets passed to should be able to handle a pathlib.Path object.
+                load_function = self.load_single_slm_disk_static
+
+            slm = load_function(
+                                    batch_idx = batch_idx,
+                                    folder=folder,
+                                    filename=filename,
+                                    flag_save_current = flag_save_current
+                                )
+
+
+            return slm.to(self.device)
+
+
+    def load_single_slm_gpu(	self,
                         batch_idx :int = 0,
                         folder : str = None,
                         filename : str = None,
@@ -449,6 +501,27 @@ class Modulator_Container(CGH_Component):
         slm = getattr(self, "slm" + str(batch_idx))
         return slm
     
+
+     # Loads an SLM without saving anything to disk
+    def load_single_slm_disk_static(self,
+                                    batch_idx,
+                                    folder : str = None,
+                                    filename : str = None,
+                                    flag_save_current = False	# This argument does nothing in this function and only serves to make it compatible with other function calls
+                                    ):
+        if batch_idx == self.current_batch_idx:
+            # We don't need to do anything if the current batch is already loaded
+            return self.values
+
+        self.current_batch_idx = batch_idx
+        slm_path = self._create_file_path(batch_idx = batch_idx, folder = folder, filename=filename)
+
+        # there is only one slm object
+        new_state_dict = torch.load(slm_path)
+        self.values.load_state_dict(new_state_dict)
+
+        return self.values
+
     
     def load_single_slm_disk(self,
                         batch_idx :int = 0,
@@ -485,7 +558,7 @@ class Modulator_Container(CGH_Component):
             folder: the folder where all SLM state_dicts are stored
         
         """
-        
+        self.clear_save_dir(folder)
         os.makedirs(folder,exist_ok=True)
 
         for k in range(self.n_slm_batches):
@@ -495,7 +568,8 @@ class Modulator_Container(CGH_Component):
             state_dict = values.state_dict()
             torch.save(state_dict, slm_path)
 
-    def load_all_slms_from_folder(self,folder):
+
+    def load_all_slms_from_folder(self, folder):
         """
         load slm state_dicts from a specific folder
 
@@ -503,27 +577,96 @@ class Modulator_Container(CGH_Component):
             slmmodel_folder: the folder where all SLM state_dicts are stored
         """
 
+        # Clear out files in the temporary SLM directory (that end in .pt)
+        self.clear_temp_slm_dir()
+
         files = glob.glob(str(folder)+"\\*.pt")
+        
+        n_batches = len(files)
+        self.n_slm_batches = n_batches
+
+        batch_size = -1
+        n_batches = -1
 
         for k in range(len(files)):
             file = Path(files[k])
             filename = str(file.stem)
             # Finds the index
             idx_slm = [int(x) for x in re.findall('\d+', filename)][0]
-            slm_state_dict = torch.load(file)
+            slm_state_dict = torch.load(file, map_location=self.device)
+
+            self.current_batch_idx = idx_slm
+            slmName = "slm" + str(idx_slm)
             
+            newContainerDimShape = slm_state_dict['_data_tensor'].shape
+            if (len(newContainerDimShape) == 5):
+                newContainerDim = Dimensions.BTCHW(
+                    n_batch     = newContainerDimShape[0], # Total number of images for Modualator_Container
+                    n_time      = newContainerDimShape[1],
+                    n_channel   = newContainerDimShape[2],
+                    height      = newContainerDimShape[3],
+                    width       = newContainerDimShape[4]
+                )
+            else:
+                raise Exception("SLM data tensors should have dimensions BTCHW.")
+
             if k == 0:
                 batch_size = slm_state_dict['_data_tensor'].shape[0]
-                n_batches = len(files)
-                self.set_images_per_batch(
-                    number_images_per_batch=batch_size,
-                    number_slm_batches=n_batches
-                                          )
-                
-            self.values.load_state_dict(slm_state_dict)
-            self.save_single_slm(batch_idx=idx_slm)
 
-    
+                with torch.no_grad():
+                    if not (self.store_on_gpu):
+                        self.values : ValueContainer = ValueContainer(	tensor_dimension = newContainerDim,
+                                                                        init_variance    = self.input_arg_init_variance,
+                                                                        init_type        = self.input_arg_init_type,
+                                                                        flag_complex     = self.input_arg_flag_complex,
+                                                                    )
+
+            if not (self.store_on_gpu):
+                self.values.load_state_dict(slm_state_dict)
+                if not (self.static_slm):
+                    self.save_single_slm(batch_idx=idx_slm)
+            else:
+                tmp_values : ValueContainer = ValueContainer(
+                    tensor_dimension = newContainerDim,
+                    init_variance    = self.input_arg_init_variance,
+                    init_type        = self.input_arg_init_type,
+                    flag_complex     = self.input_arg_flag_complex,
+                )
+                setattr(self, slmName, tmp_values)
+
+                with torch.no_grad():
+                    getattr(self, slmName).set_images_per_batch(number_images_per_batch=batch_size)
+                getattr(self, slmName).load_state_dict(slm_state_dict)
+
+                # Moving data to proper device if necessary
+                if not (self.device is None):
+                    getattr(self, slmName).data_tensor = getattr(self, slmName).data_tensor.to(self.device)
+                    getattr(self, slmName).scale = getattr(self, slmName).scale.to(self.device)
+
+
+    def clear_temp_slm_dir(self):
+        # Removes temporary stored data
+        if not (hasattr(self, 'tmp_dir')):
+            warnings.warn("Tried to clear the temporary SLM data directory, but the corresponding field 'tmp_dir' was uninitialized.")
+            return
+        elif (self.tmp_dir is None):
+            warnings.warn("Tried to clear the temporary SLM data directory, but the corresponding field 'tmp_dir' was set to None.")
+            return
+
+        test = os.listdir(self.tmp_dir)
+        for item in test:
+            if item.endswith(".pt"):
+                os.remove(os.path.join(self.tmp_dir, item))
+
+
+    def clear_save_dir(self, folder):
+        # Removes saved data
+        if (Path(folder).exists()):
+            test = os.listdir(folder)
+            for item in test:
+                if item.endswith(".pt"):
+                    os.remove(os.path.join(folder, item))
+
 
     def __str__(self, ):
         """
