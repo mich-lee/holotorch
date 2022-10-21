@@ -354,44 +354,41 @@ class ASM_Prop(CGH_Component):
 
 
 		#################################################################
-		# This is a special case where there is (or rather, I was able to find) a closed-form expression for the space domain kernel
-		# This kernel will be space domain convolved with the field to be propagated
-		# Going by the terminology in Chapter 5 of "Computational Fourier Optics: A MATLAB Tutorial" by David Voelz, this would be an
-		#	impulse response propagator.
-		if (self.prop_computation_type == 'IR') and (self.prop_kernel_type is ENUM_PROP_KERNEL_TYPE.PARAXIAL_KERNEL):
-			# Get normalized grids.  Values are on the interval [-0.5,0.5).
-			gridX = Kx / (2*np.pi) * dx_TC
-			gridY = Ky / (2*np.pi) * dy_TC
+		if (self.prop_computation_type == 'IR'):
+			# This is the impulse response propagator case (see Chapter 5 of "Computational Fourier Optics: A MATLAB Tutorial" by David Voelz)
+			# This kernel will be space domain convolved with the field to be propagated
+			if (self.prop_kernel_type is ENUM_PROP_KERNEL_TYPE.PARAXIAL_KERNEL):
+				if (self.z == 0):
+					raise Exception("Cannot have the propagation distance be zero when using a paraxial kernel with prop_computation_type == 'IR'.")
 
-			# Scale the grid so grid coordinates are spaced one apart
-			gridX = gridX * gridX.shape[-2]
-			gridY = gridY * gridY.shape[-1]
+				# Get normalized grids.  Values are on the interval [-0.5,0.5).
+				gridX = Kx / (2*np.pi) * dx_TC
+				gridY = Ky / (2*np.pi) * dy_TC
 
-			# Shift grid values so locations are symmetric about x = 0 and y = 0
-			if ((gridX.shape[-2] % 2) == 0): # Even length in dimension so need to shift over by 0.5
-				gridX = gridX + 0.5
-			if ((gridY.shape[-1] % 2) == 0): # Even length in dimension so need to shift over by 0.5
-				gridY = gridY + 0.5
+				# Scale the grid so grid coordinates are spaced one apart
+				gridX = gridX * gridX.shape[-2]
+				gridY = gridY * gridY.shape[-1]
 
-			# Scale the grids to the correct size
-			gridX = gridX * dx_TC
-			gridY = gridY * dy_TC
+				# Shift grid values so locations are symmetric about x = 0 and y = 0
+				if ((gridX.shape[-2] % 2) == 0): # Even length in dimension so need to shift over by 0.5
+					gridX = gridX + 0.5
+				if ((gridY.shape[-1] % 2) == 0): # Even length in dimension so need to shift over by 0.5
+					gridY = gridY + 0.5
 
-			fresnel_kernel_space_domain = (1 / (1j * wavelengths_TC * self.z)) * torch.exp(1j * K_lambda * self.z) * torch.exp((1j*K_lambda/(2*self.z)) * ((gridX**2) + (gridY**2)))
+				# Scale the grids to the correct size
+				gridX = gridX * dx_TC
+				gridY = gridY * dy_TC
 
-			# Try to normalize the results (field returned by forward(...) will be off by a factor of two for some reason)
-			#	- Multiplication by dx^2 was prescribed in Section 5.2 of "Computational Fourier Optics: A MATLAB Tutorial" by David Voelz.
-			#		- Presumably, if equal X and Y dimensions and sampling intervals were not assumed (like they were in that section), one would
-			#			multiply by dx*dy instead.
-			#	- The sqrt(# elemens) term was semi-arbitrarily added to try to compensate for the normalization that ift2(...) does by default (sqrt(# elements) normalization)
-			fresnel_kernel_space_domain = fresnel_kernel_space_domain * (dx_TC * dy_TC) * np.sqrt(fresnel_kernel_space_domain.numel())
+				fresnel_kernel_space_domain = (1 / (1j * wavelengths_TC * self.z)) * torch.exp(1j * K_lambda * self.z) * torch.exp((1j*K_lambda/(2*self.z)) * ((gridX**2) + (gridY**2)))
+				fresnel_kernel_space_domain = fresnel_kernel_space_domain * (dx_TC * dy_TC)
 
-			# Arbitrarily decrease the amplitude by a factor of sqrt(2).  This seems to make the results consistent with the other results for different settings that this method gives.
-			fresnel_kernel_space_domain = fresnel_kernel_space_domain / np.sqrt(2)
+				warnings.warn("You might want to verify/investigate whether or not the 'IR propagator with Fresnel/paraxial kernel' implementation in this class is correct.")
 
-			warnings.warn("You might want to verify/investigate whether or not the 'IR propagator with Fresnel/paraxial kernel' implementation in this class is correct.")
-
-			return fresnel_kernel_space_domain
+				return fresnel_kernel_space_domain
+			elif (self.prop_kernel_type is ENUM_PROP_KERNEL_TYPE.FULL_KERNEL):
+				raise Exception("Cannot use an impulse response propagator for this case.  A closed-form expression for the space-domain kernel is not available.")
+			else:
+				raise Exception("Should not be in this state.")
 		#################################################################
 		
 
@@ -410,13 +407,8 @@ class ASM_Prop(CGH_Component):
 			ang = self.z * K_lambda - self.z/(2*K_lambda)*K2	# T x C x H x W
 		elif self.prop_kernel_type is ENUM_PROP_KERNEL_TYPE.FULL_KERNEL:
 			ang = self.z * torch.sqrt(K_lambda_2 - K2) # T x C x H x W
-
-			# Evanescent components are dealt with later in this method
-				# if ang.is_complex(): # This will be true for evanescent/non-propagating frequency components
-				# 	ang = ang.real
 		else:
 			raise Exception("ERROR: Not implemented.")
-
 
 		# Adjust angle to match sign convention
 		#	For more information, see Section 4.2.1 in "Introduction to Fourier Optics" (3rd Edition) by Joseph W. Goodman
@@ -429,16 +421,14 @@ class ASM_Prop(CGH_Component):
 		else:
 			raise Exception("Invalid value for 'sign_convention'.")
 
-
 		# Compute the kernel without bandlimiting
 		kernelOut =  torch.exp(1j * ang)
 
-
 		# Remove evanescent components
-		# H_filter = torch.ones_like(ang)
-		# H_filter[(K_lambda_2 - K2) < 0] = 0
 		kernelOut[(K_lambda_2 - K2) < 0] = 0	# <--- Better for memory usage as one is not allocating an entire tensor for a bandlimiting filter
-
+			# Less efficient with memory:
+				# H_filter = torch.ones_like(ang)
+				# H_filter[(K_lambda_2 - K2) < 0] = 0
 
 		if (self.bandlimit_kernel):
 			#################################################################
@@ -454,18 +444,9 @@ class ASM_Prop(CGH_Component):
 			length_x = field.height * dx_TC
 			length_y = field.width  * dy_TC
 
-			"""
-			Old code:
-				It seems like 'f_x_max' and 'f_y_max" might have been switched here???
-					f_y_max = 2*np.pi / torch.sqrt((2 * self.z * (1 / length_x) ) **2 + 1) / wavelengths_TC
-					f_x_max = 2*np.pi / torch.sqrt((2 * self.z * (1 / length_y) ) **2 + 1) / wavelengths_TC
-
-				H_filter = torch.zeros_like(ang)
-				H_filter[ ( torch.abs(Kx) < f_x_max) & (torch.abs(Ky) < f_y_max) ] = 1
-			"""
-
-			# delta_kx = (2*pi / dx) / nHeight	,	delta_ky = (2*pi / dy) / nWidth
-			# delta_u = delta_kx / (2*pi)		,	delta_v = delta_ky / (2*pi)
+			# Some equations:
+			#	delta_kx = (2*pi / dx) / nHeight,	delta_ky = (2*pi / dy) / nWidth
+			#	delta_u = delta_kx / (2*pi)		,	delta_v = delta_ky / (2*pi)
 			delta_u = ((2*np.pi / dx_TC) / field.height) / (2*np.pi)
 			delta_v = ((2*np.pi / dy_TC) / field.width) / (2*np.pi)
 
@@ -484,9 +465,9 @@ class ASM_Prop(CGH_Component):
 
 				combinedConstraints = constraint1 & constraint2
 
-				# H_filter[~combinedConstraints] = 0
 				kernelOut[~combinedConstraints] = 0		# <--- Better for memory usage as one is not allocating an entire tensor for a bandlimiting filter
-
+					# Worse for memory:
+						# H_filter[~combinedConstraints] = 0
 			elif (self.bandlimit_type == 'approx'):
 				# Approximate constraints on frequency:
 				#	k_x_max_approx = 2*pi * [1 / sqrt((2*deltaU*z)^2 + 1)] * (1 / lambda)			(From Equation 21, substituting in Equation 13, and making the substitutions Kx_max = 2*pi*u_limit and deltaU = 1/length_x = 1/(dx*nHeight))
@@ -497,30 +478,13 @@ class ASM_Prop(CGH_Component):
 				k_x_max_approx = k_x_max_approx * self.bandlimit_kernel_fudge_factor_x
 				k_y_max_approx = k_y_max_approx * self.bandlimit_kernel_fudge_factor_y
 
-				# H_filter[ ( torch.abs(Kx) > k_x_max_approx) | (torch.abs(Ky) > k_y_max_approx) ] = 0
 				kernelOut[ ( torch.abs(Kx) > k_x_max_approx) | (torch.abs(Ky) > k_y_max_approx) ] = 0		# <--- Better for memory usage as one is not allocating an entire tensor for a bandlimiting filter
-
+					# Worse for memory:
+						# H_filter[ ( torch.abs(Kx) > k_x_max_approx) | (torch.abs(Ky) > k_y_max_approx) ] = 0
 			else:
 				raise Exception("Should not be in this state.")
-
 		
 		# ASM_Kernel =  H_filter * torch.exp(1j * ang)		# <--- Worse for memory usage as one allocated an entire tensor for a bandlimiting filter
-
-		# The case of a paraxial/Fresnel kernel with prop_computation_type = 'IR' was already handled earlier.
-		# The code inside the if-block below handles the case of a full ASM kernel with prop_computation_type = 'IR'.
-		#	- Specifically the case of prop_computation_type = 'IR' with prop_kernel_type = ENUM_PROP_KERNEL_TYPE.FULL_KERNEL
-		#
-		# Notes:
-		#	- Although this is nominally being labeled an impulse response propagator, this case is qualitatively different from what was described in
-		#		Chapter 5 of "Computational Fourier Optics: A MATLAB Tutorial" by David Voelz.
-		#	- The Fresnel impulse response propagator described there computes the kernel in the space domain (contrast with the ASM kernel which is computed from a frequency domain formula).
-		#		However, I do not have a formula for the ASM kernel in the space domain.  As such, the code computes the kernel in the frequency domain and then
-		#		applies an inverse FFT to get the kernel in the space domain.
-		#	- In other words, instead of going from space domain formula --> space domain kernel --> convolution,
-		#		the code is going from frequency domain formula --> frequency domain kernel ----(inverse FFT)----> space domain kernel --> convolution.
-		if (self.prop_computation_type == 'IR'):
-			# Get a space domain kernel.  This kernel will be convolved outside of this method.
-			kernelOut = ift2(kernelOut)
 		
 		return kernelOut
 
@@ -600,7 +564,11 @@ class ASM_Prop(CGH_Component):
 			ASM_Kernel_padded_space_domain = pad(ASM_Kernel_space_domain, (pad_y, pad_y, pad_x, pad_x), mode='constant', value=0)	# Dimensions: T x C x H_pad x W_pad
 
 			# Take the FFT to get the padded kernel in the frequency domain
-			ASM_Kernel_padded_freq_domain = ft2(ASM_Kernel_padded_space_domain)		# Dimensions: T x C x H_pad x W_pad
+			ASM_Kernel_padded_freq_domain = ft2(ASM_Kernel_padded_space_domain, norm='backward')		# Dimensions: T x C x H_pad x W_pad
+
+			# Adjust scaling to account for padding
+			# pad_rel_scale_factor = np.sqrt((field_data.shape[-2] * field_data.shape[-1]) / (H * W)) * np.sqrt(2)
+			# ASM_Kernel_padded_freq_domain = ASM_Kernel_padded_freq_domain * pad_rel_scale_factor
 
 			# Apply the ASM kernel in the frequency domain (multiplication in frequency <---> convolution in space)
 			#	- Note that 'field_data' should be padded by this point, i.e. 'field_data' should have dimensions B x T x P x C x H_pad x W_pad
