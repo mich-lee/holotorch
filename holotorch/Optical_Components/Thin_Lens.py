@@ -49,7 +49,6 @@ class Thin_Lens(CGH_Component):
 		mystr = super().__str__()
 		mystr += "\n-------------------------------------------------------------\n"
 		mystr += "Focal Length: " + str(self.focal_length/mm) + " mm \n"
-		mystr += "Padding: " + str(self.pad)
 
 		return mystr
 	

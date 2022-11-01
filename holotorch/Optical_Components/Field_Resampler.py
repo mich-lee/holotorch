@@ -18,6 +18,7 @@ class Field_Resampler(CGH_Component):
 					outputWidth							: int,
 					outputPixel_dx						: float,
 					outputPixel_dy						: float,
+					interpolationMode					: str = 'nearest',
 					device								: torch.device = None,
 					gpu_no								: int = 0,
 					use_cuda							: bool = False
@@ -45,6 +46,8 @@ class Field_Resampler(CGH_Component):
 		self.outputPixel_dx = outputPixel_dx
 		self.outputPixel_dy = outputPixel_dy
 		self.outputSpacing = (outputPixel_dx, outputPixel_dy)
+
+		self.interpolationMode = interpolationMode
 
 		outputGridX, outputGridY = generateGrid(self.outputResolution, outputPixel_dx, outputPixel_dy)
 		self.outputGridX = outputGridX.to(device=self.device)
@@ -112,8 +115,8 @@ class Field_Resampler(CGH_Component):
 		self.prevFieldSpacing = field.spacing.data_tensor
 		self.prevFieldSize = field.data.shape
 		
-		new_data = grid_sample(field_data.real, self.grid, mode='bilinear', padding_mode='zeros', align_corners=True)
-		new_data = new_data + (1j * grid_sample(field_data.imag, self.grid, mode='bilinear', padding_mode='zeros', align_corners=True))
+		new_data = grid_sample(field_data.real, self.grid, mode=self.interpolationMode, padding_mode='zeros', align_corners=True)
+		new_data = new_data + (1j * grid_sample(field_data.imag, self.grid, mode=self.interpolationMode, padding_mode='zeros', align_corners=True))
 
 		# This is less efficient with GPU memory:
 			# new_data_real = grid_sample(field_data.real, self.grid, mode='bilinear', padding_mode='zeros', align_corners=False)

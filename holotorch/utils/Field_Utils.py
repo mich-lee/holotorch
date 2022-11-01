@@ -124,6 +124,7 @@ def get_field_slice(field : Light,
 					cloneTensors : bool = True,		# Could probably get away with this being false for many cases.
 													# However, setting this to true will help assure one that data in the input argument 'field' will not get modified by this method.
 													# I am not 100% sure though whether such is possible in this method.
+					assume_6D_BTPCHW_dims : bool = True,
 					device : torch.device = None
 				):
 
@@ -173,19 +174,25 @@ def get_field_slice(field : Light,
 		device = field.data.device
 
 
-	fieldBTPCHW_shape = torch.ones(6,dtype=int)
-	if (field_data_tensor_dimension is None):
-		# Trying to infer dimension labels on field_data using the wavelength container
-		old_indices, new_indices = get_dimension_inds_remapping(old_dim=wavelengths.tensor_dimension, new_dim=Dimensions.BTPCHW)
-		if ((len(field_data.shape) - 2) != len(wavelengths.tensor_dimension.id)):
-			raise Exception("ERROR: Could not infer field data dimension labels from wavelength container.  Please manually specify with the 'field_data_tensor_dimension' argument.")
-		fieldBTPCHW_shape[new_indices.tolist()] = torch.tensor(field_data.shape)[old_indices.tolist()]
-		# Assuming that the wavelengths container does not have height and width dimensions...
-		fieldBTPCHW_shape[4:6] = torch.tensor([field_data.shape[-2], field_data.shape[-1]])
-		fieldBTPCHW_shape = torch.Size(fieldBTPCHW_shape)
+	# I believe the intent of the people who wrote this library was that the field data tensor would always be 6D (except when the Extra dimension is added).
+	# If that is the case, then the 'else' block is unnecessary.
+	if assume_6D_BTPCHW_dims:
+		if (len(field_data.shape) != 6):
+			raise Exception("The 'assume_6D_BTPCHW_dims' argument is set to True, but the field data tensor is not 6D.  Cannot assume BTPCHW dimensions.  (NOTE: Set 'assume_6D_BTPCHW_dims' to False to automatically infer dimensions.)")
+		fieldBTPCHW_shape = field_data.shape
 	else:
-		old_indices, new_indices = get_dimension_inds_remapping(old_dim=field_data_tensor_dimension, new_dim=Dimensions.BTPCHW)
-		fieldBTPCHW_shape[new_indices.tolist()] = torch.tensor(field_data.shape)[old_indices.tolist()]
+		fieldBTPCHW_shape = torch.ones(6,dtype=int)
+		if (field_data_tensor_dimension is None):
+			# Trying to infer dimension labels on field_data using the wavelength container
+			old_indices, new_indices = get_dimension_inds_remapping(old_dim=wavelengths.tensor_dimension, new_dim=Dimensions.BTPCHW)
+			if ((len(field_data.shape) - 2) != len(wavelengths.tensor_dimension.id)):
+				raise Exception("ERROR: Could not infer field data dimension labels from wavelength container.  Please manually specify with the 'field_data_tensor_dimension' argument.")
+			fieldBTPCHW_shape[new_indices.tolist()] = torch.tensor(field_data.shape)[old_indices.tolist()]
+			# Assuming that the wavelengths container does not have height and width dimensions...
+			fieldBTPCHW_shape[4:6] = torch.tensor([field_data.shape[-2], field_data.shape[-1]])
+		else:
+			old_indices, new_indices = get_dimension_inds_remapping(old_dim=field_data_tensor_dimension, new_dim=Dimensions.BTPCHW)
+			fieldBTPCHW_shape[new_indices.tolist()] = torch.tensor(field_data.shape)[old_indices.tolist()]
 		fieldBTPCHW_shape = torch.Size(fieldBTPCHW_shape)
 
 	wavelengthsBTPCHW_shape = wavelengths.tensor_dimension.get_new_shape(new_dim=Dimensions.BTPCHW)

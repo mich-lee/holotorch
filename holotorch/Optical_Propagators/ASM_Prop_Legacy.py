@@ -17,7 +17,6 @@ from torch.nn.functional import pad
 import matplotlib.pyplot as plt
 
 import warnings
-import copy
 
 from holotorch.Optical_Components.CGH_Component import CGH_Component
 import holotorch.utils.Dimensions as Dimensions
@@ -26,7 +25,7 @@ from holotorch.utils.Helper_Functions import ft2, ift2
 from holotorch.utils.Enumerators import *
 
 
-class ASM_Prop(CGH_Component):
+class ASM_Prop_Legacy(CGH_Component):
 
 	def __init__(self,
 					init_distance						: float = 0.0,
@@ -192,11 +191,13 @@ class ASM_Prop(CGH_Component):
 		self.z_opt								= z_opt
 		self.z									= init_distance
 
-		self.prop_kernel = None
-		self.prop_kernel_spacing = None
-		self.prop_kernel_wavelengths = None
-		self.prop_kernel_field_shape = None
+		# the normalized frequency grid
+		# we don't actually know dimensions until forward is called
+		self.Kx = None
+		self.Ky = None
 
+		# initialize the shape
+		self.shape = None
 
 	def compute_padding(self, H, W, return_size_of_padding = False):
 		# Get the shape for processing
@@ -206,8 +207,8 @@ class ASM_Prop(CGH_Component):
 			paddedH = int(H)
 			paddedW = int(W)
 		else:
-			paddingH = int(np.floor((float(self.padding_scale[0]) * H) / 2))
-			paddingW = int(np.floor((float(self.padding_scale[1]) * W) / 2))
+			paddingH = int(np.floor((self.padding_scale[0] * H) / 2))
+			paddingW = int(np.floor((self.padding_scale[1] * W) / 2))
 			paddedH = H + 2*paddingH
 			paddedW = W + 2*paddingW
 
@@ -216,11 +217,58 @@ class ASM_Prop(CGH_Component):
 		else:
 			return paddingH, paddingW
 
+	def create_frequency_grid(self, H, W):
+		# precompute frequency grid for ASM defocus kernel
+		with torch.no_grad():
+			# Creates the frequency coordinate grid in x and y direction
+			kx = (torch.linspace(0, H - 1, H) - (H // 2)) / H
+			ky = (torch.linspace(0, W - 1, W) - (W // 2)) / W
+
+			self.Kx, self.Ky = torch.meshgrid(kx, ky)
+
+	@property
+	def shape(self):
+		return self._shape
+
+	@shape.setter
+	def shape(self, shape):
+		if (shape is None):
+			self._shape = None
+			return
+		try:
+			_,_,_,_,H_new,W_new = shape
+			if (self.shape is None):
+				self._shape  = shape
+				self.create_frequency_grid(H_new,W_new)
+			else:
+				_,_,_,_,H_old,W_old = self.shape
+				self._shape  = shape
+				if H_old != H_new or W_old != W_new:
+					self.create_frequency_grid(H_new,W_new)
+		except AttributeError:
+			self._shape  = shape
+
+	@property
+	def Kx(self):
+		return self._Kx
+
+	@Kx.setter
+	def Kx(self, Kx):
+		self.register_buffer("_Kx", Kx)
+
+	@property
+	def Ky(self):
+		return self._Ky
+
+	@Ky.setter
+	def Ky(self, Ky):
+		self.register_buffer("_Ky", Ky)
+
 
 	def visualize_kernel(self,
 			field : ElectricField,
 		):
-		kernel = self.update_kernel(field = field)
+		kernel = self.create_kernel(field = field)
 
 		plt.subplot(121)
 		plt.imshow(kernel.abs().cpu().squeeze(),vmin=0)
@@ -231,47 +279,10 @@ class ASM_Prop(CGH_Component):
 		plt.tight_layout()
 
 
-	def update_kernel(self, field : ElectricField):
-		def checkContainersEqual(c1, c2):
-			if not torch.equal(c1.data_tensor, c2.data_tensor):
-				return False
-			if c1.tensor_dimension.id != c2.tensor_dimension.id:
-				return False
-			return True
-
-		rebuildFlag = False
-		if self.prop_kernel is None:
-			rebuildFlag = True
-		else:
-			if not torch.equal(torch.tensor(field.data.shape), torch.tensor(self.prop_kernel_field_shape)):
-				rebuildFlag = True
-			if not checkContainersEqual(field.wavelengths, self.prop_kernel_wavelengths):
-				rebuildFlag = True
-			if not checkContainersEqual(field.spacing, self.prop_kernel_spacing):
-				rebuildFlag = True
-
-		if (rebuildFlag == False):
-			return
-
-		self.generate_propagation_kernel(field)
-		self.prop_kernel = self.prop_kernel.to(device=field.data.device)
-		self.prop_kernel_field_shape = field.data.shape
-		self.prop_kernel_wavelengths = copy.deepcopy(field.wavelengths)
-		self.prop_kernel_spacing = copy.deepcopy(field.spacing)
-
-		# check for changed settings
-		
-
-	def generate_propagation_kernel(self, field : ElectricField):
-		def create_normalized_grid(H, W, device):
-			# precompute frequency grid for ASM defocus kernel
-			with torch.no_grad():
-				# Creates the frequency coordinate grid in x and y direction
-				kx = (torch.linspace(0, H - 1, H) - (H // 2)) / H
-				ky = (torch.linspace(0, W - 1, W) - (W // 2)) / W
-				Kx, Ky = torch.meshgrid(kx, ky)
-				return Kx.to(device=device), Ky.to(device=device)
-
+	# Returns a frequency domain kernel when self.prop_computation_type == 'TF' and a space domain kernel when self.prop_computation_type == 'IR'
+	def create_kernel(self,
+		field : ElectricField,
+			):
 
 		if (self.prop_computation_type == 'TF'):
 			# The Kx and Ky grids will be the same size as the padded field data
@@ -284,17 +295,10 @@ class ASM_Prop(CGH_Component):
 			# The Kx and Ky grids will be the same size as the unpadded field data
 			tempShape = field.shape
 		else:
-			raise Exception("Invalid option for 'prop_computation_type'.")
+			raise Exception("Should not be in this state.")
 
-		_,_,_,_,H_new,W_new = tempShape
-
-
-
-
-		# get the wavelengths data as a TxC tensor
-		new_shape       = field.wavelengths.tensor_dimension.get_new_shape(new_dim=Dimensions.TC)
-		wavelengths_TC  = field.wavelengths.data_tensor.view(new_shape) # T x C
-		wavelengths_TC  = wavelengths_TC[:,:,None,None]		# Expand wavelengths for H and W dimension
+		# store the shape - the setter automatically creates a new grid if dimensions changed
+		self.shape = tempShape
 
 		# extract dx, dy spacing into T x C tensors
 		spacing = field.spacing.data_tensor
@@ -304,38 +308,67 @@ class ASM_Prop(CGH_Component):
 		else:
 			dy = dx
 
-		# get the spacing data as a TxC tensor
+		# extract the data tensor from the field
+		wavelengths = field.wavelengths
+
+		#################################################################
+		# Prepare Dimensions to shape to be able to process 6D data
+		# ---------------------------------------------------------------
+		# NOTE: This just means we're broadcasting lower-dimensional
+		# tensors to higher dimensional ones
+		#################################################################
+
+		# get the wavelengths data as a TxC tensor
+		new_shape       = wavelengths.tensor_dimension.get_new_shape(new_dim=Dimensions.TC)
+		wavelengths_TC  = wavelengths.data_tensor.view(new_shape) # T x C
+		# Expand wavelengths for H and W dimension
+		wavelengths_TC  = wavelengths_TC[:,:,None,None]
+
+		# do the same for the spacing
 		dx_TC   = dx.expand(new_shape)
 		dx_TC   = dx_TC[:,:,None,None] # Expand to H and W
 		dy_TC   = dy.expand(new_shape)
 		dy_TC   = dy_TC[:,:,None,None] # Expand to H and W
 
-		# compute wavenumbers
-		K_lambda = 2*np.pi /  wavelengths_TC	# T x C x H x W
-		K_lambda_2 = K_lambda**2 				# T x C x H x W
-
-
-
 
 		#################################################################
-		# Propagation Using Impulse Response
+		# Compute the Transfer Function Kernel
 		#################################################################
-		# This is the impulse response propagator case (see Chapter 5 of "Computational Fourier Optics: A MATLAB Tutorial" by David Voelz)
-		# This kernel will be space domain convolved with the field to be propagated
+
+		# Expand the frequency grid for T and C dimension
+
+		self.Kx = self.Kx.to(device=field.data.device)
+		self.Ky = self.Ky.to(device=field.data.device)
+
+
+		Kx = 2*np.pi * self.Kx[None,None,:,:] / dx_TC
+		Ky = 2*np.pi * self.Ky[None,None,:,:] / dy_TC
+
+		# create the frequency grid for each T x C wavelength/spacing combo
+		K2 = Kx**2 + Ky**2
+
+		# compute ASM kernel on the fly for the right wavelengths
+		K_lambda = 2*np.pi /  wavelengths_TC # T x C x H x W
+		K_lambda_2 = K_lambda**2  # T x C x H x W
+
+
 		#################################################################
 		if (self.prop_computation_type == 'IR'):
+			# This is the impulse response propagator case (see Chapter 5 of "Computational Fourier Optics: A MATLAB Tutorial" by David Voelz)
+			# This kernel will be space domain convolved with the field to be propagated
 			if (self.prop_kernel_type is ENUM_PROP_KERNEL_TYPE.PARAXIAL_KERNEL):
 				if (self.z == 0):
 					raise Exception("Cannot have the propagation distance be zero when using a paraxial kernel with prop_computation_type == 'IR'.")
 
 				# Get normalized grids.  Values are on the interval [-0.5,0.5).
-				gridX, gridY = create_normalized_grid(H_new, W_new, field.data.device)
-				gridX = gridX[None,None,:,:]
-				gridY = gridY[None,None,:,:]
+				gridX = Kx / (2*np.pi) * dx_TC
+				gridY = Ky / (2*np.pi) * dy_TC
 
-				# Scale the grid so it is centered around (0,0) and the grid coordinates are spaced one apart
+				# Scale the grid so grid coordinates are spaced one apart
 				gridX = gridX * gridX.shape[-2]
 				gridY = gridY * gridY.shape[-1]
+
+				# Shift grid values so locations are symmetric about x = 0 and y = 0
 				if ((gridX.shape[-2] % 2) == 0): # Even length in dimension so need to shift over by 0.5
 					gridX = gridX + 0.5
 				if ((gridY.shape[-1] % 2) == 0): # Even length in dimension so need to shift over by 0.5
@@ -345,37 +378,24 @@ class ASM_Prop(CGH_Component):
 				gridX = gridX * dx_TC
 				gridY = gridY * dy_TC
 
-				kernelOut = (1 / (1j * wavelengths_TC * self.z)) * torch.exp(1j * K_lambda * self.z) * torch.exp((1j*K_lambda/(2*self.z)) * ((gridX**2) + (gridY**2)))
-				kernelOut = kernelOut * (dx_TC * dy_TC)		# Space domain kernel
+				fresnel_kernel_space_domain = (1 / (1j * wavelengths_TC * self.z)) * torch.exp(1j * K_lambda * self.z) * torch.exp((1j*K_lambda/(2*self.z)) * ((gridX**2) + (gridY**2)))
+				fresnel_kernel_space_domain = fresnel_kernel_space_domain * (dx_TC * dy_TC)
 
-				pad_x, pad_y = self.compute_padding(field.data.shape[-2], field.data.shape[-1], return_size_of_padding=True)
-				kernelOut = pad(kernelOut, (pad_y, pad_y, pad_x, pad_x), mode='constant', value=0)
-				kernelOut = ft2(kernelOut, norm='backward')
-				
-				self.prop_kernel = kernelOut
-				return
+				warnings.warn("You might want to verify/investigate whether or not the 'IR propagator with Fresnel/paraxial kernel' implementation in this class is correct.")
+
+				return fresnel_kernel_space_domain
 			elif (self.prop_kernel_type is ENUM_PROP_KERNEL_TYPE.FULL_KERNEL):
 				raise Exception("Cannot use an impulse response propagator for this case.  A closed-form expression for the space-domain kernel is not available.")
 			else:
-				raise Exception("Unknown kernel type.")
+				raise Exception("Should not be in this state.")
 		#################################################################
+		
 
-
-
-
-		#################################################################
-		# Propagation using transfer functions
-		#################################################################
-		# MORE on ASM Kernels here in these sources:
-		#	Digital Holographic Microscopy - Principles, Techniques, and Applications
-		#	Also some information in Goodman's Fourier optics book (3rd edition)
-		#################################################################
-		# create the frequency grid for each T x C wavelength/spacing combo
-		Kx, Ky = create_normalized_grid(H_new, W_new, field.data.device)
-		Kx = 2*np.pi * Kx[None,None,:,:] / dx_TC
-		Ky = 2*np.pi * Ky[None,None,:,:] / dy_TC
-		K2 = Kx**2 + Ky**2
-
+		# MORE on ASM Kernels here in this book:
+		# Digital Holographic Microscopy
+		# Principles, Techniques, and Applications
+		#
+		# Also some information in Goodman's Fourier optics book (3rd edition)
 		if self.prop_kernel_type is ENUM_PROP_KERNEL_TYPE.PARAXIAL_KERNEL:
 			# NOTES:
 			#	- The expression "ang = self.z * K_lambda - self.z/(2*K_lambda)*K2" should hopefully be the correct expression
@@ -387,7 +407,7 @@ class ASM_Prop(CGH_Component):
 		elif self.prop_kernel_type is ENUM_PROP_KERNEL_TYPE.FULL_KERNEL:
 			ang = self.z * torch.sqrt(K_lambda_2 - K2) # T x C x H x W
 		else:
-			raise Exception("Unknown kernel type.")
+			raise Exception("ERROR: Not implemented.")
 
 		# Adjust angle to match sign convention
 		#	For more information, see Section 4.2.1 in "Introduction to Fourier Optics" (3rd Edition) by Joseph W. Goodman
@@ -400,8 +420,14 @@ class ASM_Prop(CGH_Component):
 		else:
 			raise Exception("Invalid value for 'sign_convention'.")
 
-		kernelOut =  torch.exp(1j * ang)		# Compute the kernel without bandlimiting
-		kernelOut[(K_lambda_2 - K2) < 0] = 0	# Remove evanescent components
+		# Compute the kernel without bandlimiting
+		kernelOut =  torch.exp(1j * ang)
+
+		# Remove evanescent components
+		kernelOut[(K_lambda_2 - K2) < 0] = 0	# <--- Better for memory usage as one is not allocating an entire tensor for a bandlimiting filter
+			# Less efficient with memory:
+				# H_filter = torch.ones_like(ang)
+				# H_filter[(K_lambda_2 - K2) < 0] = 0
 
 		if (self.bandlimit_kernel):
 			#################################################################
@@ -411,41 +437,55 @@ class ASM_Prop(CGH_Component):
 			# "Band-Limited Angular Spectrum Method for Numerical Simulation of Free-Space Propagation in Far and Near Fields,"
 			#  Opt. Express  17, 19662-19673 (2009).
 			#################################################################
+
+			# size of the field
+			# # Total field size on the hologram plane
+			length_x = field.height * dx_TC
+			length_y = field.width  * dy_TC
+
 			# Some equations:
 			#	delta_kx = (2*pi / dx) / nHeight,	delta_ky = (2*pi / dy) / nWidth
 			#	delta_u = delta_kx / (2*pi)		,	delta_v = delta_ky / (2*pi)
-			#	u_limit = 1 / [lambda * sqrt( (2*deltaU*z)^2 + 1)]						(Equation 13)
-			#	v_limit = 1 / [lambda * sqrt( (2*deltaV*z)^2 + 1)]						(Equation 20)
 			delta_u = ((2*np.pi / dx_TC) / field.height) / (2*np.pi)
 			delta_v = ((2*np.pi / dy_TC) / field.width) / (2*np.pi)
+
+			# Some limits:
+			#	u_limit = 1 / [lambda * sqrt( (2*deltaU*z)^2 + 1)]			(Equation 13)
+			#	v_limit = 1 / [lambda * sqrt( (2*deltaV*z)^2 + 1)]			(Equation 20)
 			u_limit = 1 / torch.sqrt( ((2*delta_u*self.z)**2) + 1 ) / wavelengths_TC
 			v_limit = 1 / torch.sqrt( ((2*delta_v*self.z)**2) + 1 ) / wavelengths_TC
+
 			if (self.bandlimit_type == 'exact'):
 				# Precise constraints on frequency:
 				#	constraint1 = Kx^2 / (2*pi*u_lim)^2 + Ky^2 / k^2 <= 1			(From Equation 18, substituting in Equation 13, and making the substitutions Kx = 2*pi*u, Ky = 2*pi*v, and k = 2*pi/lambda)
 				#	constraint2 = Kx^2 / k^2 + Ky^2 / (2*pi*v_lim)^2 <= 1			(From Equation 19, substituting in Equation 20, and making substitutions Kx = 2*pi*u, Ky = 2*pi*v, and k = 2*pi/lambda)
 				constraint1 = (((Kx**2) / ((2*np.pi*u_limit)**2)) + ((Ky**2) / (K_lambda**2))) <= (1 * self.bandlimit_kernel_fudge_factor_x)
 				constraint2 = (((Kx**2) / (K_lambda**2)) + ((Ky**2) / ((2*np.pi*v_limit)**2))) <= (1 * self.bandlimit_kernel_fudge_factor_y)
+
 				combinedConstraints = constraint1 & constraint2
+
 				kernelOut[~combinedConstraints] = 0		# <--- Better for memory usage as one is not allocating an entire tensor for a bandlimiting filter
+					# Worse for memory:
+						# H_filter[~combinedConstraints] = 0
 			elif (self.bandlimit_type == 'approx'):
 				# Approximate constraints on frequency:
 				#	k_x_max_approx = 2*pi * [1 / sqrt((2*deltaU*z)^2 + 1)] * (1 / lambda)			(From Equation 21, substituting in Equation 13, and making the substitutions Kx_max = 2*pi*u_limit and deltaU = 1/length_x = 1/(dx*nHeight))
 				#	k_y_max_approx = 2*pi * [1 / sqrt((2*deltaV*z)^2 + 1)] * (1 / lambda)			(From Equation 22, substituting in Equation 20, and making the substitutions Ky_max = 2*pi*v_limit and deltaV = 1/length_y = 1/(dy*nWidth))
-				length_x = field.height * dx_TC
-				length_y = field.width  * dy_TC
 				k_x_max_approx = 2*np.pi / torch.sqrt( ((2*(1/length_x)*self.z)**2) + 1 ) / wavelengths_TC
 				k_y_max_approx = 2*np.pi / torch.sqrt( ((2*(1/length_y)*self.z)**2) + 1 ) / wavelengths_TC
+
 				k_x_max_approx = k_x_max_approx * self.bandlimit_kernel_fudge_factor_x
 				k_y_max_approx = k_y_max_approx * self.bandlimit_kernel_fudge_factor_y
+
 				kernelOut[ ( torch.abs(Kx) > k_x_max_approx) | (torch.abs(Ky) > k_y_max_approx) ] = 0		# <--- Better for memory usage as one is not allocating an entire tensor for a bandlimiting filter
+					# Worse for memory:
+						# H_filter[ ( torch.abs(Kx) > k_x_max_approx) | (torch.abs(Ky) > k_y_max_approx) ] = 0
 			else:
-				raise Exception("Invalid option for 'bandlimit_type'.")
+				raise Exception("Should not be in this state.")
 		
-		self.prop_kernel = kernelOut
-
-
-
+		# ASM_Kernel =  H_filter * torch.exp(1j * ang)		# <--- Worse for memory usage as one allocated an entire tensor for a bandlimiting filter
+		
+		return kernelOut
 
 
 	def forward(self,
@@ -461,42 +501,90 @@ class ASM_Prop(CGH_Component):
 		Returns:
 			ElectricField: The electric field after the rotate field propagation model
 		"""
-
-		# Update the propagation kernel (if necessary)
-		self.update_kernel(field)
-
 		# extract the data tensor from the field
 		wavelengths = field.wavelengths
 		field_data  = field.data
 
+		#################################################################
+		# Apply the convolution in Angular Spectrum
+		#################################################################
+
 		# convert field to 4D tensor for batch processing
 		B,T,P,C,H,W = field_data.shape
 		field_data = field_data.view(B*T*P,C,H,W)
+
 
 		# Pad 'field_data' avoid convolution wrap-around effects
 		if (self.do_padding):
 			pad_x, pad_y = self.compute_padding(H, W, return_size_of_padding=True)
 			field_data = pad(field_data, (pad_y, pad_y, pad_x, pad_x), mode='constant', value=0)
 
-		_, _, H_pad,W_pad = field_data.shape
-
-		originalPropKernelDevice = self.prop_kernel.device
 		if (self.utilize_cpu):
-			self.prop_kernel = self.prop_kernel.to('cpu')
 			field_data = field_data.to('cpu')
 
-		# Convert to angular spectrum/frequency domain
+		_, _, H_pad,W_pad = field_data.shape
+
+		# convert to angular spectrum
 		field_data = ft2(field_data)
-		field_data = field_data.view(B,T,P,C,H_pad,W_pad)	# Convert 4D into 6D so that 6D propagation kernel can be applied
 
-		# Do convolution in frequency
-		field_data = field_data * self.prop_kernel[None,:,None,:,:,:]
+		# Convert 4D into 6D so that 6D-ASM Kernel can be applied
+		field_data = field_data.view(B,T,P,C,H_pad,W_pad)
+		
 
-		# Go back to the space domain
-		field_data = field_data.view(B*T*P,C,H_pad,W_pad)	# Convert from 6D to 4D so IFFT can be applied
-		field_data = ift2(field_data)
+		kernel_temp = self.create_kernel(field)		# Returns a frequency domain kernel when self.prop_computation_type == 'TF'
+													# and a space domain kernel when self.prop_computation_type == 'IR'
 
-		# Unpad the field after convolution, if necessary
+		if (self.utilize_cpu):
+			kernel_temp = kernel_temp.to('cpu')
+
+		if (self.prop_computation_type == 'TF'):
+			# Get the kernel in the frequency domain
+			#	- Note that 'ASM_Kernel_freq_domain' has the same dimensions as the padded 'field_data'.  Logic in create_kernel(...) makes sure that padding is applied when prop_computation_type='TF'.
+			ASM_Kernel_freq_domain = kernel_temp	# Dimensions: T x C x H_pad x W_pad		<--- Note: Padded dimensions
+
+			# Apply the ASM kernel in the frequency domain (multiplication in frequency <---> convolution in space)
+			#	- Note that 'field_data' should be padded by this point, i.e. 'field_data' should have dimensions B x T x P x C x H_pad x W_pad
+			#	- 'ASM_Kernel_space_domain' should have dimensions T x C x H_pad x W_pad
+			#	- Indexing 'ASM_Kernel_freq_domain' with [None,:,None,:,:,:] will result in a tensor with dimensions 1 x T x 1 x C x H_pad x W_pad
+			field_data = field_data * ASM_Kernel_freq_domain[None,:,None,:,:,:]
+
+		elif (self.prop_computation_type == 'IR'):
+			# The stuff in this block can be thought of as convolving the BxTxPxCxHxW input field (i.e. field.data)
+			# with a TxCxHxW kernel that describes propagation.  The end result should be the fields after propagation.
+
+			# Get the kernel in the space domain
+			#	- Note that 'ASM_Kernel_space_domain' is unpadded.  Logic in create_kernel(...) makes sure that no padding is applied when prop_computation_type='IR'.
+			ASM_Kernel_space_domain = kernel_temp		# Dimensions: T x C x H x W		<--- Note: Unpaddeed dimensions
+
+			# Pad the space domain kernel so that it can be convolved with the input field
+			#	- The reason why padding is done here is because FFTs are being used for convolution.  Since pointwise multiplication of FFTs + subsequent inverse FFT is actually circular convolution, zero padding + subsequent truncation are needed in order to perform linear convolution with FFTs.
+			#	- The reason why convolution is being being done with FFTs is because it is faster (at the expense of more space being needed).  Convolution without FFTs should be O(n^2), versus convolution with FFTs which is O(n log n).
+			pad_x, pad_y = self.compute_padding(H, W, return_size_of_padding=True)
+			ASM_Kernel_padded_space_domain = pad(ASM_Kernel_space_domain, (pad_y, pad_y, pad_x, pad_x), mode='constant', value=0)	# Dimensions: T x C x H_pad x W_pad
+
+			# Take the FFT to get the padded kernel in the frequency domain
+			ASM_Kernel_padded_freq_domain = ft2(ASM_Kernel_padded_space_domain, norm='backward')		# Dimensions: T x C x H_pad x W_pad
+
+			# Adjust scaling to account for padding
+			# pad_rel_scale_factor = np.sqrt((field_data.shape[-2] * field_data.shape[-1]) / (H * W)) * np.sqrt(2)
+			# ASM_Kernel_padded_freq_domain = ASM_Kernel_padded_freq_domain * pad_rel_scale_factor
+
+			# Apply the ASM kernel in the frequency domain (multiplication in frequency <---> convolution in space)
+			#	- Note that 'field_data' should be padded by this point, i.e. 'field_data' should have dimensions B x T x P x C x H_pad x W_pad
+			#	- 'ASM_Kernel_padded_space_domain' should have dimensions T x C x H_pad x W_pad
+			#	- Indexing 'ASM_Kernel_padded_freq_domain' with [None,:,None,:,:,:] will result in a tensor with dimensions 1 x T x 1 x C x H_pad x W_pad
+			field_data = field_data * ASM_Kernel_padded_freq_domain[None,:,None,:,:,:]
+
+		else:
+			raise Exception("Invalid value for 'prop_computation_type'.")
+
+		# Convert 'field_data' from 6D to 4D so that FFT2 can be applied to 4D tensor
+		field_data = field_data.view(B*T*P,C,H_pad,W_pad)	# Dimensions: B*T*P x C x H_pad x W_pad
+
+		# Convert 'field_data' back to the space domain
+		field_data = ift2(field_data)	# Dimensions: B*T*P x C x H_pad x W_pad
+
+		# Unpad the image after convolution, if necessary
 		if (self.do_padding and self.do_unpad_after_pad):
 			center_crop = torchvision.transforms.CenterCrop([H,W])
 			field_data = center_crop(field_data)
@@ -510,7 +598,6 @@ class ASM_Prop(CGH_Component):
 		# Move field_data back to original device
 		if (self.utilize_cpu):
 			field_data = field_data.to(field.data.device)
-			self.prop_kernel = self.prop_kernel.to(originalPropKernelDevice)
 
 		field.spacing.set_spacing_center_wavelengths(field.spacing.data_tensor)
 
