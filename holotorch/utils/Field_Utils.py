@@ -120,7 +120,7 @@ def get_field_slice(field : Light,
 					height_inds_range : int = None,
 					width_inds_range : int = None,
 					field_data_tensor_dimension : TensorDimension = None, 	# For specifying the field's data tensor dimension in case it cannot
-																			# be inferred from field.wavelengths.
+																			# be inferred from field.wavelengths or was automatically assumed (by default) to be 6D BTPCHW.
 					cloneTensors : bool = True,		# Could probably get away with this being false for many cases.
 													# However, setting this to true will help assure one that data in the input argument 'field' will not get modified by this method.
 													# I am not 100% sure though whether such is possible in this method.

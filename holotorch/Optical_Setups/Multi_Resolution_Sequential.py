@@ -11,7 +11,7 @@ from holotorch.utils.Enumerators import *
 from holotorch.Optical_Components.CGH_Component import CGH_Component
 from holotorch.CGH_Datatypes.Light import Light
 
-from holotorch_addons.Field_Resampler import Field_Resampler
+from holotorch.Optical_Components.Field_Resampler import Field_Resampler
 
 ########################################################################################################################
 
@@ -20,8 +20,8 @@ class Multi_Resolution_Sequential(CGH_Component):
 	Similar to torch.nn.Sequential, but this allows for rescaling/resampling the fields in-between steps.
 	Note that this 
 	"""
-	def __init__(self,
-					components				: list or tuple,
+	def __init__(	self,
+					components			: list or tuple,
 					resolutions			: list or tuple,
 					elementSpacings		: list or tuple,
 					device				: torch.device = None,
