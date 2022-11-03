@@ -150,7 +150,7 @@ class ASM_Prop(CGH_Component):
 
 		super().__init__()
 
-		self.add_attribute( attr_name="z")
+		self.add_attribute(attr_name="z")
 
 		DEFAULT_PADDING_SCALE = torch.tensor([1,1])
 		if do_padding:
@@ -197,6 +197,25 @@ class ASM_Prop(CGH_Component):
 		self.prop_kernel_wavelengths = None
 		self.prop_kernel_field_shape = None
 
+		self.prevParameters = self.createParameterDict()
+
+
+	def createParameterDict(self):
+		parameterDict =	{
+							'sign_convention'	: self.sign_convention,
+							'prop_kernel_type'	: self.prop_kernel_type,
+							'prop_computation_type'	: self.prop_computation_type,
+							'do_padding'	: self.do_padding,
+							'do_unpad_after_pad'	: self.do_unpad_after_pad,
+							'padding_scale'	: self.padding_scale,
+							'bandlimit_kernel'	: self.bandlimit_kernel,
+							'bandlimit_kernel_fudge_factor_x'	: self.bandlimit_kernel_fudge_factor_x,
+							'bandlimit_kernel_fudge_factor_y'	: self.bandlimit_kernel_fudge_factor_y,
+							'bandlimit_type'	: self.bandlimit_type,
+							'z'	: self.z
+						}
+		return parameterDict
+
 
 	def compute_padding(self, H, W, return_size_of_padding = False):
 		# Get the shape for processing
@@ -231,7 +250,7 @@ class ASM_Prop(CGH_Component):
 		plt.tight_layout()
 
 
-	def update_kernel(self, field : ElectricField):
+	def update_kernel(self, field : ElectricField, forceRebuild: bool = False):
 		def checkContainersEqual(c1, c2):
 			if not torch.equal(c1.data_tensor, c2.data_tensor):
 				return False
@@ -240,15 +259,22 @@ class ASM_Prop(CGH_Component):
 			return True
 
 		rebuildFlag = False
-		if self.prop_kernel is None:
+		if (forceRebuild == True):
 			rebuildFlag = True
-		else:
-			if not torch.equal(torch.tensor(field.data.shape), torch.tensor(self.prop_kernel_field_shape)):
-				rebuildFlag = True
-			if not checkContainersEqual(field.wavelengths, self.prop_kernel_wavelengths):
-				rebuildFlag = True
-			if not checkContainersEqual(field.spacing, self.prop_kernel_spacing):
-				rebuildFlag = True
+		elif self.prop_kernel is None:
+			rebuildFlag = True
+		elif not torch.equal(torch.tensor(field.data.shape), torch.tensor(self.prop_kernel_field_shape)):
+			rebuildFlag = True
+		elif not checkContainersEqual(field.wavelengths, self.prop_kernel_wavelengths):
+			rebuildFlag = True
+		elif not checkContainersEqual(field.spacing, self.prop_kernel_spacing):
+			rebuildFlag = True
+		
+		# This is its own 'if' because changing parameters means that the kernel needs to be rebuilt, regardless of what the input field is.
+		if self.prevParameters != self.createParameterDict():
+			# Not the most efficient to keep checking like this, but this is probably trivial compared to the main computation.
+			rebuildFlag = True
+			self.prevParameters = self.createParameterDict()
 
 		if (rebuildFlag == False):
 			return
@@ -258,8 +284,6 @@ class ASM_Prop(CGH_Component):
 		self.prop_kernel_field_shape = field.data.shape
 		self.prop_kernel_wavelengths = copy.deepcopy(field.wavelengths)
 		self.prop_kernel_spacing = copy.deepcopy(field.spacing)
-
-		# check for changed settings
 		
 
 	def generate_propagation_kernel(self, field : ElectricField):

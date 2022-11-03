@@ -48,12 +48,6 @@ class Field_Resampler(CGH_Component):
 		self.outputSpacing = (outputPixel_dx, outputPixel_dy)
 
 		self.interpolationMode = interpolationMode
-
-		outputGridX, outputGridY = generateGrid(self.outputResolution, outputPixel_dx, outputPixel_dy)
-		self.outputGridX = outputGridX.to(device=self.device)
-		self.outputGridY = outputGridY.to(device=self.device)
-
-		self.calculateOutputCoordGrid()
 		
 		self.grid = None
 		self.prevFieldSpacing = None
@@ -61,18 +55,20 @@ class Field_Resampler(CGH_Component):
 
 
 	def calculateOutputCoordGrid(self):
-		# Can assume that coordinate (0,0) is in the center due to how generateGrid(...) works
-		gridX = self.outputGridX
-		gridY = self.outputGridY
+		grid = torch.zeros(self.outputResolution[0], self.outputResolution[1], 2, device=self.device)
 
-		grid = torch.zeros(self.outputResolution[0], self.outputResolution[1], 2)
+		# Can assume that coordinate (0,0) is in the center due to how generateGrid(...) works
+		gridX, gridY = generateGrid(self.outputResolution, self.outputPixel_dx, self.outputPixel_dy)
+		# gridX = gridX.to(device=self.device)
+		# gridY = gridY.to(device=self.device)
 
 		# Stuff is ordered this way because torch.nn.functiona.grid_sample(...) has x as the coordinate in the width direction
-		# and y as the coordinate in the height dimension.  This is the opposite of the convention used by this code.
+		# and y as the coordinate in the height dimension.  This is the opposite of the convention used by Holotorch.
 		grid[:,:,0] = gridY
 		grid[:,:,1] = gridX
 
-		self.gridPrototype = grid.to(device=self.device)
+		# self.gridPrototype = grid.to(device=self.device)
+		return grid
 	
 	
 	def forward(self, field):
@@ -105,24 +101,22 @@ class Field_Resampler(CGH_Component):
 			yNorm = spacing_data[:,:,1,:] * ((Wf - 1) // 2)
 			yNorm = yNorm[:,:,None,:]
 
-			self.grid = self.gridPrototype.repeat(Bf*Tf*Pf,1,1,1)
+			# self.grid = self.gridPrototype.repeat(Bf*Tf*Pf,1,1,1)
+			self.grid = self.calculateOutputCoordGrid()
 
 			# Stuff is ordered this way because torch.nn.functiona.grid_sample(...) has x as the coordinate in the width direction
-			# and y as the coordinate in the height dimension.  This is the opposite of the convention used by this code.
+			# and y as the coordinate in the height dimension.  This is the opposite of the convention used by Holotorch.
 			self.grid[... , 0] = self.grid[... , 0] / yNorm
 			self.grid[... , 1] = self.grid[... , 1] / xNorm
+
+			self.grid = self.grid.expand(torch.Size(torch.cat((torch.tensor([Bf*Tf*Pf]), torch.tensor(self.grid.shape)))))
+
 
 		self.prevFieldSpacing = field.spacing.data_tensor
 		self.prevFieldSize = field.data.shape
 		
 		new_data = grid_sample(field_data.real, self.grid, mode=self.interpolationMode, padding_mode='zeros', align_corners=True)
 		new_data = new_data + (1j * grid_sample(field_data.imag, self.grid, mode=self.interpolationMode, padding_mode='zeros', align_corners=True))
-
-		# This is less efficient with GPU memory:
-			# new_data_real = grid_sample(field_data.real, self.grid, mode='bilinear', padding_mode='zeros', align_corners=False)
-			# new_data_imag = grid_sample(field_data.imag, self.grid, mode='bilinear', padding_mode='zeros', align_corners=False)
-			# new_data = new_data_real + (1j * new_data_imag)
-
 		new_data = new_data.view(Bf,Tf,Pf,Cf,self.outputResolution[0],self.outputResolution[1]) # Reshape to 6D
 
 		# Assumes that the last dimension of the input field's spacing data tensor contains the x- and y-spacings

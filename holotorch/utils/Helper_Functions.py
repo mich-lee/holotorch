@@ -183,23 +183,6 @@ def perform_ft(input, delta=1, norm = 'ortho', pad = False, flag_ifft : bool = F
         out = transformer_6d_4d.transform_4D_to_6D(tensor_in=out, newshape=new_shape)
 
     return out
-        
-
-def print_cuda_memory_usage(device : torch.device, printShort = False):
-	gpu_mem_allocated = torch.cuda.memory_allocated(device)
-	gpu_mem_reserved = torch.cuda.memory_reserved(device)
-	gpu_mem_total = torch.cuda.get_device_properties(device).total_memory
-	if not printShort:
-		gpu_info_printout_lines = torch.cuda.memory_summary(device=device,abbreviated=True).split('\n')
-		gpu_info_printout_str = '\n'.join([gpu_info_printout_lines[i] for i in [0,1,4,5,6,7,11,17,26]])
-		print(gpu_info_printout_str)
-		print('  Memory Usage (Reserved): %.2f GB / %.2f GB  -  %.2f%%' % (gpu_mem_reserved/(1024**3), gpu_mem_total/(1024**3), (gpu_mem_reserved/gpu_mem_total)*100))
-	else:
-		print('  Allocated: %.2f GB\tReserved: %.2f GB\tTotal: %.2f GB' % (gpu_mem_allocated/(1024**3), gpu_mem_reserved/(1024**3), gpu_mem_total/(1024**3)))
-
-
-def get_tensor_size_bytes(tensorInput : torch.Tensor):
-	return tensorInput.nelement() * tensorInput.element_size()
 
 
 def generateGrid(res, deltaX, deltaY, centerGrids = True, centerAroundZero = True, device=None):
