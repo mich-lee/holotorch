@@ -29,6 +29,8 @@ from typing import Union
 
 import holotorch.utils.transformer_6d_4d as transformer_6d_4d
 
+import holotorch.utils.Memory_Utils as Memory_Utils
+
 warnings.filterwarnings("ignore", category=DeprecationWarning) 
 warnings.filterwarnings("ignore", category=UserWarning) 
 
@@ -163,8 +165,6 @@ def perform_ft(input, delta=1, norm = 'ortho', pad = False, flag_ifft : bool = F
     else:
         myfft = torch.fft.ifft2
         my_fftshift = torch.fft.ifftshift
-
-
     
     # Compute the Fourier Transform
     out = (delta**2)* my_fftshift( myfft (  my_fftshift (input, dim=(-2,-1))  , dim=(-2,-1), norm=norm)  , dim=(-2,-1))
