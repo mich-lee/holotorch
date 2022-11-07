@@ -24,7 +24,7 @@ class Memory_Reclaimer(CGH_Component):
 			Memory_Utils.initialize()
 
 		if not (clear_cuda_cache or collect_garbage):
-			warnings.warn("Redundant Memory_Reclaimer component")
+			warnings.warn("Unneccessary Memory_Reclaimer component")
 
 
 	def forward(self, field : ElectricField) -> ElectricField:

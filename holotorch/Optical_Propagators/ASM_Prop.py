@@ -38,6 +38,7 @@ class ASM_Prop(CGH_Component):
 					do_padding							: bool = True,
 					do_unpad_after_pad					: bool = True,
 					padding_scale						: float or torch.Tensor = None,
+					memoize_prop_kernel					: bool = True,
 					sign_convention						: ENUM_PHASE_SIGN_CONVENTION = ENUM_PHASE_SIGN_CONVENTION.TIME_PHASORS_ROTATE_CLOCKWISE,
 					bandlimit_kernel					: bool = True,
 					bandlimit_type						: str = 'exact',
@@ -115,6 +116,11 @@ class ASM_Prop(CGH_Component):
 																		- padding_scale = torch.tensor([1,2])
 																		- Padded field dimensions: height=100, width=300	<--- (50 + 1*50, 100 + 2*100)
 
+			memoize_prop_kernel (bool, optional):	Determines whether or not to save the propagation kernel in-between forward passes.
+													This should generally be set to True as it reduces redundant computations.
+													However, setting this to False can possibly help memory consumption as the propagation kernels are freed up to be collected by the garbage collector, rather than saved.
+													Defaults to True.
+
 			sign_convention (ENUM_PHASE_SIGN_CONVENTION):	Determines what sign convention to assume for time domain phasors.
 															Cases:
 																If sign_convention == ENUM_PHASE_SIGN_CONVENTION.TIME_PHASORS_ROTATE_CLOCKWISE:
@@ -186,6 +192,7 @@ class ASM_Prop(CGH_Component):
 		self.do_padding							= do_padding
 		self.do_unpad_after_pad					= do_unpad_after_pad
 		self.padding_scale						= padding_scale
+		self.memoize_prop_kernel				= memoize_prop_kernel
 		self.bandlimit_kernel					= bandlimit_kernel
 		self.bandlimit_kernel_fudge_factor_x	= bandlimit_kernel_fudge_factor_x
 		self.bandlimit_kernel_fudge_factor_y	= bandlimit_kernel_fudge_factor_y
@@ -208,6 +215,7 @@ class ASM_Prop(CGH_Component):
 							'prop_computation_type'	: self.prop_computation_type,
 							'do_padding'	: self.do_padding,
 							'do_unpad_after_pad'	: self.do_unpad_after_pad,
+							'memoize_prop_kernel'	: self.memoize_prop_kernel,
 							'padding_scale'	: self.padding_scale,
 							'bandlimit_kernel'	: self.bandlimit_kernel,
 							'bandlimit_kernel_fudge_factor_x'	: self.bandlimit_kernel_fudge_factor_x,
@@ -544,5 +552,11 @@ class ASM_Prop(CGH_Component):
 				wavelengths=wavelengths,
 				spacing=field.spacing
 				)
+
+		if not self.memoize_prop_kernel:
+			self.prop_kernel = None
+			self.prop_kernel_field_shape = None
+			self.prop_kernel_wavelengths = None
+			self.prop_kernel_spacing = None
 
 		return Eout
