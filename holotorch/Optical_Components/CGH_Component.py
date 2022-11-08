@@ -44,6 +44,7 @@ class CGH_Component(torch.nn.Module):
 
     def __setstate__(self, state):
         vars(self).update(state)
+        self.renitialize_attributes()
     
     def __str__(self) -> str:
         

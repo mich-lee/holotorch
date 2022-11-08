@@ -29,7 +29,7 @@ import holotorch.utils.Memory_Utils as Memory_Utils
 
 class ASM_Prop(CGH_Component):
 
-	def __init__(self,
+	def __init__(	self,
 					init_distance						: float = 0.0,
 					z_opt								: bool = False,
 					prop_kernel_type					: ENUM_PROP_KERNEL_TYPE = ENUM_PROP_KERNEL_TYPE.FULL_KERNEL,
