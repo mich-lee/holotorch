@@ -48,7 +48,7 @@ def print_cuda_memory_usage(device : torch.device, printShort = False):
 # Clears the cache when MEMORY_UTILS_ENABLED is set to True and ONE of the following conditions is met:
 #	1. A sufficiently large portion of the total GPU memory is reverved (>= RESERVED_MEM_CLEAR_CACHE_THRESHOLD)
 #	2. Allocated memory comprises a sufficiently small portion of reserved memory (<= ALLOC_TO_RESERVED_RATIO_CLEAR_CACHE_THRESHOLD)
-def clean_unused_reserved_cuda_memory(device : torch.device):
+def clean_unused_reserved_cuda_memory(device : torch.device, force_clean : bool = False):
 	if (not _MEMORY_UTILS_ENABLED) or (device.type != 'cuda'):
 		return
 	
@@ -62,5 +62,5 @@ def clean_unused_reserved_cuda_memory(device : torch.device):
 	
 	allocatedFraction = gpu_mem_allocated / gpu_mem_reserved
 	reservedFraction = gpu_mem_reserved / gpu_mem_total
-	if (reservedFraction >= RESERVED_MEM_CLEAR_CACHE_THRESHOLD) or (allocatedFraction <= ALLOC_TO_RESERVED_RATIO_CLEAR_CACHE_THRESHOLD):
+	if (force_clean) or (reservedFraction >= RESERVED_MEM_CLEAR_CACHE_THRESHOLD) or (allocatedFraction <= ALLOC_TO_RESERVED_RATIO_CLEAR_CACHE_THRESHOLD):
 		torch.cuda.empty_cache()

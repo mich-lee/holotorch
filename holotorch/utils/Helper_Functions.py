@@ -185,6 +185,41 @@ def perform_ft(input, delta=1, norm = 'ortho', pad = False, flag_ifft : bool = F
     return out
 
 
+################################################################################################################################
+# Some in-place 2D FFT implementations.  Useful for conserving GPU VRAM/memory since the out-of-place FFTs allocate new memory.
+################################################################################################################################
+
+def fft2_inplace(x : torch.tensor, centerOrigins : bool = True, norm : str = 'ortho'):
+	return _fft2_inplace_helper(x=x, centerOrigins=centerOrigins, norm=norm, inverse_fft_flag=False)
+
+def ifft2_inplace(x : torch.tensor, centerOrigins : bool = True, norm : str = 'ortho'):
+	return _fft2_inplace_helper(x=x, centerOrigins=centerOrigins, norm=norm, inverse_fft_flag=True)
+
+def _fft2_inplace_helper(x : torch.tensor, centerOrigins : bool = True, norm : str = 'ortho', inverse_fft_flag : bool = False):
+	if not inverse_fft_flag:
+		fft_func = torch.fft.fft
+		fftshift_func = torch.fft.fftshift
+	else:
+		fft_func = torch.fft.ifft
+		fftshift_func = torch.fft.ifftshift
+
+	for r in range(x.shape[-2]):
+		if centerOrigins:
+			x[...,r,:] = fftshift_func(fft_func(fftshift_func(x[...,r,:], dim=-1), dim=-1, norm=norm), dim=-1)
+		else:
+			x[...,r,:] = fft_func(x[...,r,:], dim=-1, norm=norm)
+
+	for c in range(x.shape[-1]):
+		if centerOrigins:
+			x[...,:,c] = fftshift_func(fft_func(fftshift_func(x[...,:,c], dim=-1), dim=-1, norm=norm), dim=-1)
+		else:
+			x[...,:,c] = fft_func(x[...,:,c], dim=-1, norm=norm)
+
+	return x
+
+################################################################################################################################
+
+
 def generateGrid(res, deltaX, deltaY, centerGrids = True, centerAroundZero = True, device=None):
 	if (torch.is_tensor(deltaX)):
 		deltaX = copy.deepcopy(deltaX).squeeze().to(device=device)
@@ -284,11 +319,13 @@ def parseNumberAndUnitsString(str):
 		raise Exception("Invalid number string.")
 
 
-# Not bothering to check for matching dimensions here
-def applyFilterSpaceDomain(h : torch.tensor, x : torch.tensor):
+def conv(a : torch.tensor, b : torch.tensor):
+	if (a.shape[-2:] != b.shape[-2:]):
+		raise Exception("Mismatched tensor dimensions!  Last two dimensions must be the same size.")
+
 	# Assumes h and x have the same size
-	Nx_old = int(x.shape[-2])
-	Ny_old = int(x.shape[-1])
+	Nx_old = int(b.shape[-2])
+	Ny_old = int(b.shape[-1])
 
 	pad_nx = int(Nx_old / 2)
 	pad_ny = int(Ny_old / 2)
@@ -297,19 +334,23 @@ def applyFilterSpaceDomain(h : torch.tensor, x : torch.tensor):
 	# That function has the pad_nx and pad_ny arguments reversed in its call to torch.nn.functional.pad(...)
 	# Because of that, the x dimension (height) gets y's padding amount and vice-versa.
 	# Therefore, doing the padding here.
-	hPadded = torch.nn.functional.pad(h, (pad_ny,pad_ny,pad_nx,pad_nx), mode='constant', value=0)
-	xPadded = torch.nn.functional.pad(x, (pad_ny,pad_ny,pad_nx,pad_nx), mode='constant', value=0)
-	H = ft2(hPadded, pad=False)
-	X = ft2(xPadded, pad=False)
+	aPadded = torch.nn.functional.pad(a, (pad_ny,pad_ny,pad_nx,pad_nx), mode='constant', value=0)
+	bPadded = torch.nn.functional.pad(b, (pad_ny,pad_ny,pad_nx,pad_nx), mode='constant', value=0)
+	A = ft2(aPadded, pad=False)
+	B = ft2(bPadded, pad=False)
 
 	# The normalization on the FFTs of hPadded and xPadded get multiplied together.  This throws off the scaling.
-	rescaleFactor = np.sqrt(hPadded.shape[-2] * hPadded.shape[-1])
+	rescaleFactor = np.sqrt(aPadded.shape[-2] * aPadded.shape[-1])
 
-	Y = (H * X) * rescaleFactor
+	Y = (A * B) * rescaleFactor
 	y = ift2(Y)
 	y = y[..., pad_nx:(pad_nx+Nx_old), pad_ny:(pad_ny+Ny_old)]
 
 	return y
+
+
+def applyFilterSpaceDomain(h : torch.tensor, x : torch.tensor):
+	return conv(h, x)
 
 
 def computeBandlimitingFilterSpaceDomain(f_x_max, f_y_max, Kx, Ky):

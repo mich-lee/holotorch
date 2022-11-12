@@ -22,7 +22,7 @@ import copy
 from holotorch.Optical_Components.CGH_Component import CGH_Component
 import holotorch.utils.Dimensions as Dimensions
 from holotorch.CGH_Datatypes.ElectricField import ElectricField
-from holotorch.utils.Helper_Functions import ft2, ift2
+from holotorch.utils.Helper_Functions import ft2, ift2, fft2_inplace, ifft2_inplace
 from holotorch.utils.Enumerators import *
 import holotorch.utils.Memory_Utils as Memory_Utils
 
@@ -39,6 +39,7 @@ class ASM_Prop(CGH_Component):
 					do_unpad_after_pad					: bool = True,
 					padding_scale						: float or torch.Tensor = None,
 					memoize_prop_kernel					: bool = True,
+					do_ffts_inplace						: bool = False,
 					sign_convention						: ENUM_PHASE_SIGN_CONVENTION = ENUM_PHASE_SIGN_CONVENTION.TIME_PHASORS_ROTATE_CLOCKWISE,
 					bandlimit_kernel					: bool = True,
 					bandlimit_type						: str = 'exact',
@@ -121,6 +122,11 @@ class ASM_Prop(CGH_Component):
 													However, setting this to False can possibly help memory consumption as the propagation kernels are freed up to be collected by the garbage collector, rather than saved.
 													Defaults to True.
 
+			do_ffts_inplace (bool, optional):	Determines whether or not to do the 2D FFTs/IFFTs in-place.
+												Setting this to True can help prevent one from running out of memory.
+												Note that the out-of-place FFTs/IFFTs are faster.
+												Defaults to False.
+
 			sign_convention (ENUM_PHASE_SIGN_CONVENTION):	Determines what sign convention to assume for time domain phasors.
 															Cases:
 																If sign_convention == ENUM_PHASE_SIGN_CONVENTION.TIME_PHASORS_ROTATE_CLOCKWISE:
@@ -193,6 +199,7 @@ class ASM_Prop(CGH_Component):
 		self.do_unpad_after_pad					= do_unpad_after_pad
 		self.padding_scale						= padding_scale
 		self.memoize_prop_kernel				= memoize_prop_kernel
+		self.do_ffts_inplace					= do_ffts_inplace
 		self.bandlimit_kernel					= bandlimit_kernel
 		self.bandlimit_kernel_fudge_factor_x	= bandlimit_kernel_fudge_factor_x
 		self.bandlimit_kernel_fudge_factor_y	= bandlimit_kernel_fudge_factor_y
@@ -216,6 +223,7 @@ class ASM_Prop(CGH_Component):
 							'do_padding'	: self.do_padding,
 							'do_unpad_after_pad'	: self.do_unpad_after_pad,
 							'memoize_prop_kernel'	: self.memoize_prop_kernel,
+							'do_ffts_inplace'	: self.do_ffts_inplace,
 							'padding_scale'	: self.padding_scale,
 							'bandlimit_kernel'	: self.bandlimit_kernel,
 							'bandlimit_kernel_fudge_factor_x'	: self.bandlimit_kernel_fudge_factor_x,
@@ -383,7 +391,11 @@ class ASM_Prop(CGH_Component):
 
 				pad_x, pad_y = self.compute_padding(field.data.shape[-2], field.data.shape[-1], return_size_of_padding=True)
 				kernelOut = pad(kernelOut, (pad_y, pad_y, pad_x, pad_x), mode='constant', value=0)
-				kernelOut = ft2(kernelOut, norm='backward')
+
+				if self.do_ffts_inplace:
+					fft2_inplace(kernelOut, norm='backward')
+				else:
+					kernelOut = ft2(kernelOut, norm='backward')
 				
 				self.prop_kernel = kernelOut
 				return
@@ -510,6 +522,8 @@ class ASM_Prop(CGH_Component):
 		if (self.do_padding):
 			pad_x, pad_y = self.compute_padding(H, W, return_size_of_padding=True)
 			field_data = pad(field_data, (pad_y, pad_y, pad_x, pad_x), mode='constant', value=0)
+		else:
+			field_data = field_data.clone()
 
 		_, _, H_pad,W_pad = field_data.shape
 
@@ -519,7 +533,10 @@ class ASM_Prop(CGH_Component):
 			field_data = field_data.to('cpu')
 
 		# Convert to angular spectrum/frequency domain
-		field_data = ft2(field_data)
+		if self.do_ffts_inplace:
+			fft2_inplace(field_data)
+		else:
+			field_data = ft2(field_data)
 		field_data = field_data.view(B,T,P,C,H_pad,W_pad)	# Convert 4D into 6D so that 6D propagation kernel can be applied
 
 		# Do convolution in frequency
@@ -527,7 +544,10 @@ class ASM_Prop(CGH_Component):
 
 		# Go back to the space domain
 		field_data = field_data.view(B*T*P,C,H_pad,W_pad)	# Convert from 6D to 4D so IFFT can be applied
-		field_data = ift2(field_data)
+		if self.do_ffts_inplace:
+			ifft2_inplace(field_data)
+		else:
+			field_data = ift2(field_data)
 
 		# Unpad the field after convolution, if necessary
 		if (self.do_padding and self.do_unpad_after_pad):
