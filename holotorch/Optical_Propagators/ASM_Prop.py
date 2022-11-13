@@ -217,19 +217,19 @@ class ASM_Prop(CGH_Component):
 
 	def createParameterDict(self):
 		parameterDict =	{
-							'sign_convention'	: self.sign_convention,
-							'prop_kernel_type'	: self.prop_kernel_type,
-							'prop_computation_type'	: self.prop_computation_type,
-							'do_padding'	: self.do_padding,
-							'do_unpad_after_pad'	: self.do_unpad_after_pad,
-							'memoize_prop_kernel'	: self.memoize_prop_kernel,
-							'do_ffts_inplace'	: self.do_ffts_inplace,
-							'padding_scale'	: self.padding_scale,
-							'bandlimit_kernel'	: self.bandlimit_kernel,
+							'sign_convention'					: self.sign_convention,
+							'prop_kernel_type'					: self.prop_kernel_type,
+							'prop_computation_type'				: self.prop_computation_type,
+							'do_padding'						: self.do_padding,
+							'do_unpad_after_pad'				: self.do_unpad_after_pad,
+							'memoize_prop_kernel'				: self.memoize_prop_kernel,
+							'do_ffts_inplace'					: self.do_ffts_inplace,
+							'padding_scale'						: self.padding_scale,
+							'bandlimit_kernel'					: self.bandlimit_kernel,
 							'bandlimit_kernel_fudge_factor_x'	: self.bandlimit_kernel_fudge_factor_x,
 							'bandlimit_kernel_fudge_factor_y'	: self.bandlimit_kernel_fudge_factor_y,
-							'bandlimit_type'	: self.bandlimit_type,
-							'z'	: self.z
+							'bandlimit_type'					: self.bandlimit_type,
+							'z'									: self.z
 						}
 		return parameterDict
 

@@ -34,6 +34,12 @@ import holotorch.utils.Memory_Utils as Memory_Utils
 warnings.filterwarnings("ignore", category=DeprecationWarning) 
 warnings.filterwarnings("ignore", category=UserWarning) 
 
+################################################################################################################################
+
+FFT2_INPLACE_MAX_PARALLEL_OVERHEAD_MIB = 128
+FFT2_INPLACE_MAX_NUM_PARALLEL_FFTS_DEFAULT = -1
+
+################################################################################################################################
 
 def replace_bkwd(fwd: torch.Tensor, bkwd: torch.Tensor):
     new         = bkwd.clone()  # contains backwardFn from bkwd
@@ -59,7 +65,7 @@ def set_default_device(device: Union[str, torch.device]):
         torch.set_default_tensor_type(torch.FloatTensor)
         print("CUDA2")
 
-def total_variation(input: torch.tensor):
+def total_variation(input: torch.Tensor):
     '''
     compute centerered finite difference derivative for input along dimensions dim
     zero pad the boundary
@@ -75,7 +81,7 @@ def total_variation(input: torch.tensor):
     dx, dy = center_difference(input)
     return dx.abs().mean() + dy.abs().mean()
 
-def center_difference(input: torch.tensor):
+def center_difference(input: torch.Tensor):
     '''
     compute centerered finite difference derivative for input along dimensions dim
     zero pad the boundary
@@ -189,13 +195,51 @@ def perform_ft(input, delta=1, norm = 'ortho', pad = False, flag_ifft : bool = F
 # Some in-place 2D FFT implementations.  Useful for conserving GPU VRAM/memory since the out-of-place FFTs allocate new memory.
 ################################################################################################################################
 
-def fft2_inplace(x : torch.tensor, centerOrigins : bool = True, norm : str = 'ortho'):
-	return _fft2_inplace_helper(x=x, centerOrigins=centerOrigins, norm=norm, inverse_fft_flag=False)
+# Default arguments (should) result in behavior that matches Holotorch's ft2
+def fft2_inplace(	x : torch.Tensor,
+					centerOrigins : bool = True,
+					norm : str = 'ortho',
+					parallelizeFFTs : bool = True,
+					maxParallelOverheadMiB : float = FFT2_INPLACE_MAX_PARALLEL_OVERHEAD_MIB,
+					maxNumParallelFFTs : int = FFT2_INPLACE_MAX_NUM_PARALLEL_FFTS_DEFAULT
+				):
+	return _fft2_inplace_helper(x=x, centerOrigins=centerOrigins, norm=norm, inverse_fft_flag=False,
+									parallelizeFFTs=parallelizeFFTs, maxParallelOverheadMiB=maxParallelOverheadMiB, maxNumParallelFFTs=maxNumParallelFFTs)
 
-def ifft2_inplace(x : torch.tensor, centerOrigins : bool = True, norm : str = 'ortho'):
-	return _fft2_inplace_helper(x=x, centerOrigins=centerOrigins, norm=norm, inverse_fft_flag=True)
+# Default arguments (should) result in behavior that matches Holotorch's ift2
+def ifft2_inplace(	x : torch.Tensor,
+					centerOrigins : bool = True,
+					norm : str = 'ortho',
+					parallelizeFFTs : bool = True,
+					maxParallelOverheadMiB : float = FFT2_INPLACE_MAX_PARALLEL_OVERHEAD_MIB,
+					maxNumParallelFFTs : int = FFT2_INPLACE_MAX_NUM_PARALLEL_FFTS_DEFAULT
+				):
+	return _fft2_inplace_helper(x=x, centerOrigins=centerOrigins, norm=norm, inverse_fft_flag=True,
+									parallelizeFFTs=parallelizeFFTs, maxParallelOverheadMiB=maxParallelOverheadMiB, maxNumParallelFFTs=maxNumParallelFFTs)
 
-def _fft2_inplace_helper(x : torch.tensor, centerOrigins : bool = True, norm : str = 'ortho', inverse_fft_flag : bool = False):
+def _fft2_inplace_helper(	x : torch.Tensor,
+							centerOrigins : bool = True,
+							norm : str = 'ortho',
+							inverse_fft_flag : bool = False,
+							parallelizeFFTs : bool = True,
+							maxParallelOverheadMiB : float = FFT2_INPLACE_MAX_PARALLEL_OVERHEAD_MIB,
+							maxNumParallelFFTs : int = FFT2_INPLACE_MAX_NUM_PARALLEL_FFTS_DEFAULT
+						):
+	if parallelizeFFTs:
+		maxOverheadBytes = maxParallelOverheadMiB * 1024 * 1024
+		maxOverheadBytesEffective = maxOverheadBytes / 2	# Dividing by 2 because fft/ifft and fftshift/ifftshift allocate new memory equal to the size of the input
+		
+		nBytesRow = x.shape[-1] * x.element_size()
+		nBytesCol = x.shape[-2] * x.element_size()
+
+		nParallel = np.floor(min(maxOverheadBytesEffective / nBytesRow, maxOverheadBytesEffective / nBytesCol))
+		if (maxNumParallelFFTs != -1):
+			nParallel = min(nParallel, maxNumParallelFFTs)
+
+		nParallel = int(min(x.shape[-2], x.shape[-1], nParallel))
+	else:
+		nParallel = 1
+	
 	if not inverse_fft_flag:
 		fft_func = torch.fft.fft
 		fftshift_func = torch.fft.fftshift
@@ -203,17 +247,34 @@ def _fft2_inplace_helper(x : torch.tensor, centerOrigins : bool = True, norm : s
 		fft_func = torch.fft.ifft
 		fftshift_func = torch.fft.ifftshift
 
-	for r in range(x.shape[-2]):
-		if centerOrigins:
-			x[...,r,:] = fftshift_func(fft_func(fftshift_func(x[...,r,:], dim=-1), dim=-1, norm=norm), dim=-1)
-		else:
-			x[...,r,:] = fft_func(x[...,r,:], dim=-1, norm=norm)
+	for r in range(0, x.shape[-2], nParallel):
+		rStart = r
+		rEnd = min(r + nParallel, x.shape[-2])
+		x_temp = x[...,rStart:rEnd,:]	# Grabbing a chunk of data.  The data will refer to the same underlying memory as 'x'.
 
-	for c in range(x.shape[-1]):
+		# Note that we are indexing into x_temp because doing regular assignment (i.e. x_temp = ...) will result in
+		# x_temp no longer pointing to the same data as x.
 		if centerOrigins:
-			x[...,:,c] = fftshift_func(fft_func(fftshift_func(x[...,:,c], dim=-1), dim=-1, norm=norm), dim=-1)
+			# Breaking this up into three operations to reduce the memory overhead
+			x_temp[...] = fftshift_func(x_temp, dim=-1)
+			x_temp[...] = fft_func(x_temp, norm=norm, dim=-1)
+			x_temp[...] = fftshift_func(x_temp, dim=-1)
 		else:
-			x[...,:,c] = fft_func(x[...,:,c], dim=-1, norm=norm)
+			x_temp[...] = fft_func(x_temp, dim=-1, norm=norm)
+
+	for c in range(0, x.shape[-1], nParallel):
+		cStart = c
+		cEnd = min(c + nParallel, x.shape[-1])
+		x_temp = x[...,:,cStart:cEnd]	# Grabbing a chunk of data.  The data will refer to the same underlying memory as 'x'.
+
+		# Just as before, indexing into x_temp rather than assigning.
+		if centerOrigins:
+			# Breaking this up into three operations to reduce the memory overhead
+			x_temp[...] = fftshift_func(x_temp, dim=-2)
+			x_temp[...] = fft_func(x_temp, norm=norm, dim=-2)
+			x_temp[...] = fftshift_func(x_temp, dim=-2)
+		else:
+			x_temp[...] = fft_func(x_temp, dim=-2, norm=norm)
 
 	return x
 
@@ -319,7 +380,7 @@ def parseNumberAndUnitsString(str):
 		raise Exception("Invalid number string.")
 
 
-def conv(a : torch.tensor, b : torch.tensor):
+def conv(a : torch.Tensor, b : torch.Tensor):
 	if (a.shape[-2:] != b.shape[-2:]):
 		raise Exception("Mismatched tensor dimensions!  Last two dimensions must be the same size.")
 
@@ -349,7 +410,7 @@ def conv(a : torch.tensor, b : torch.tensor):
 	return y
 
 
-def applyFilterSpaceDomain(h : torch.tensor, x : torch.tensor):
+def applyFilterSpaceDomain(h : torch.Tensor, x : torch.Tensor):
 	return conv(h, x)
 
 
