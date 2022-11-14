@@ -131,6 +131,14 @@ class TensorDimension():
         new_shape = torch.Size(new_shape)
         return new_shape
 
+    # TODO: Test this more rigorously
+    def has_compatible_shape(self, otherDim : TensorDimension):
+        if (len(self.id) > 6) or (len(otherDim.id) > 6):
+            raise Exception("Method not implemented for dimensions bigger than BTPCHW.")
+        shape1 = torch.tensor(self.get_new_shape(BTPCHW))
+        shape2 = torch.tensor(otherDim.get_new_shape(BTPCHW))
+        return torch.all((shape1 == shape2) | (shape1 == 1) | (shape2 == 1))
+
    
     @property
     def ndim(self) -> int:

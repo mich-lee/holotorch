@@ -108,5 +108,8 @@ class SpacingContainer(nn.Module):
     def get_spacing_center_wavelengths(self):
         return self._spacing_center_wavelengths
     
-    
-
+    # TODO: Test this more rigorously
+    def is_equivalent(self, other : SpacingContainer):
+        selfData = self.data_tensor.view(self.tensor_dimension.get_new_shape(BTPCHW))
+        otherData = other.data_tensor.view(self.tensor_dimension.get_new_shape(BTPCHW))
+        return torch.all(selfData == otherData)
