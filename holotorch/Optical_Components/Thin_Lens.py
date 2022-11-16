@@ -12,7 +12,8 @@ from holotorch.CGH_Datatypes.ElectricField import ElectricField
 from holotorch.Spectra.SpacingContainer import SpacingContainer
 from holotorch.utils import Dimensions
 import holotorch.utils.Dimensions as Dimension
-from holotorch.utils.Helper_Functions import *
+# from holotorch.utils.Helper_Functions import *
+from holotorch.utils.Helper_Functions import generateGrid
 from holotorch.utils.units import *
 from holotorch.utils.Enumerators import *
 
@@ -89,10 +90,14 @@ class Thin_Lens(CGH_Component):
 		dy_TC   = dy.expand(new_shape)
 		dy_TC   = dy_TC[:,:,None,None] # Expand to H and W
 
-		xCoordsTemp = torch.linspace(-((nHeight - 1) // 2), (nHeight - 1) // 2, nHeight)
-		yCoordsTemp = torch.linspace(-((nWidth - 1) // 2), (nWidth - 1) // 2, nWidth)
-		xGridTemp, yGridTemp = torch.meshgrid(xCoordsTemp, yCoordsTemp)
-		
+		# These grids are (probably) slightly misaligned relative to the coordinates implied by ft2(...) and ift2(...)
+			# xCoordsTemp = torch.linspace(-((nHeight - 1) // 2), (nHeight - 1) // 2, nHeight)
+			# yCoordsTemp = torch.linspace(-((nWidth - 1) // 2), (nWidth - 1) // 2, nWidth)
+			# xGridTemp, yGridTemp = torch.meshgrid(xCoordsTemp, yCoordsTemp)
+			# xGrid_TC = xGridTemp[None,None,:,:].to(field.data.device) * dx_TC
+			# yGrid_TC = yGridTemp[None,None,:,:].to(field.data.device) * dy_TC
+
+		xGridTemp, yGridTemp = generateGrid([nHeight, nWidth], 1, 1, centerGrids=True, centerCoordsAroundZero=False, device=field.data.device)
 		xGrid_TC = xGridTemp[None,None,:,:].to(field.data.device) * dx_TC
 		yGrid_TC = yGridTemp[None,None,:,:].to(field.data.device) * dy_TC
 

@@ -281,19 +281,22 @@ def _fft2_inplace_helper(	x : torch.Tensor,
 ################################################################################################################################
 
 
-def generateGrid(res, deltaX, deltaY, centerGrids = True, centerAroundZero = True, device=None):
+def generateGrid(res, deltaX, deltaY, centerGrids = True, centerCoordsAroundZero = False, device=None):
 	if (torch.is_tensor(deltaX)):
 		deltaX = copy.deepcopy(deltaX).squeeze().to(device=device)
 	if (torch.is_tensor(deltaY)):
 		deltaY = copy.deepcopy(deltaY).squeeze().to(device=device)
 
 	if (centerGrids):
-		if (centerAroundZero):
+		if centerCoordsAroundZero:
 			xCoords = torch.linspace(-((res[0] - 1) // 2), (res[0] - 1) // 2, res[0]).to(device=device) * deltaX
 			yCoords = torch.linspace(-((res[1] - 1) // 2), (res[1] - 1) // 2, res[1]).to(device=device) * deltaY
 		else:
-			xCoords = (torch.linspace(0, res[0] - 1, res[0]) - (res[0] // 2)).to(device=device) * deltaX
-			yCoords = (torch.linspace(0, res[1] - 1, res[1]) - (res[1] // 2)).to(device=device) * deltaY
+			# The two commented lines below are not consistent with the zero coordinate implied by ift2(...).  (Doing ift2(torch.ones(...)) will indicate which point is considered zero as it gives an impulse at zero.)
+				# xCoords = (torch.linspace(0, res[0] - 1, res[0]) - (res[0] // 2)).to(device=device) * deltaX
+				# yCoords = (torch.linspace(0, res[1] - 1, res[1]) - (res[1] // 2)).to(device=device) * deltaY
+			xCoords = (torch.linspace(0, res[0] - 1, res[0]) - np.ceil(res[0] / 2)).to(device=device) * deltaX
+			yCoords = (torch.linspace(0, res[1] - 1, res[1]) - np.ceil(res[1] / 2)).to(device=device) * deltaY
 	else:
 		xCoords = torch.linspace(0, res[0] - 1, res[0]).to(device=device) * deltaX
 		yCoords = torch.linspace(0, res[1] - 1, res[1]).to(device=device) * deltaY
@@ -301,6 +304,12 @@ def generateGrid(res, deltaX, deltaY, centerGrids = True, centerAroundZero = Tru
 	xGrid, yGrid = torch.meshgrid(xCoords, yCoords)
 
 	return xGrid, yGrid
+
+
+def get_center_hw_inds_wrt_ft(x : torch.Tensor):
+	H = x.shape[-2]
+	W = x.shape[-2]
+	return int(np.ceil(H/2)), int(np.ceil(W/2))
 
 
 # Resizes image while keeping its aspect ratio.  Will make the resized image as big as possible without
@@ -380,7 +389,7 @@ def parseNumberAndUnitsString(str):
 		raise Exception("Invalid number string.")
 
 
-def conv(a : torch.Tensor, b : torch.Tensor):
+def conv(a : torch.Tensor, b : torch.Tensor, use_inplace_ffts : bool = False):
 	if (a.shape[-2:] != b.shape[-2:]):
 		raise Exception("Mismatched tensor dimensions!  Last two dimensions must be the same size.")
 
@@ -397,21 +406,31 @@ def conv(a : torch.Tensor, b : torch.Tensor):
 	# Therefore, doing the padding here.
 	aPadded = torch.nn.functional.pad(a, (pad_ny,pad_ny,pad_nx,pad_nx), mode='constant', value=0)
 	bPadded = torch.nn.functional.pad(b, (pad_ny,pad_ny,pad_nx,pad_nx), mode='constant', value=0)
-	A = ft2(aPadded, pad=False)
-	B = ft2(bPadded, pad=False)
+	if not use_inplace_ffts:
+		A = ft2(aPadded, pad=False)
+		B = ft2(bPadded, pad=False)
+	else:
+		A = aPadded
+		B = bPadded
+		fft2_inplace(A)
+		fft2_inplace(B)
 
 	# The normalization on the FFTs of hPadded and xPadded get multiplied together.  This throws off the scaling.
 	rescaleFactor = np.sqrt(aPadded.shape[-2] * aPadded.shape[-1])
 
 	Y = (A * B) * rescaleFactor
-	y = ift2(Y)
+	if not use_inplace_ffts:
+		y = ift2(Y)
+	else:
+		y = Y
+		ifft2_inplace(y)
 	y = y[..., pad_nx:(pad_nx+Nx_old), pad_ny:(pad_ny+Ny_old)]
 
 	return y
 
 
-def applyFilterSpaceDomain(h : torch.Tensor, x : torch.Tensor):
-	return conv(h, x)
+def applyFilterSpaceDomain(h : torch.Tensor, x : torch.Tensor, use_inplace_ffts : bool = False):
+	return conv(h, x, use_inplace_ffts=use_inplace_ffts)
 
 
 def computeBandlimitingFilterSpaceDomain(f_x_max, f_y_max, Kx, Ky):

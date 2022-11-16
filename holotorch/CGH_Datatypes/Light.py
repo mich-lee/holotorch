@@ -166,7 +166,16 @@ class Light():
             wavelengths=wavelengths,
             spacing = spacing,
             identifier=self.identifier
-                     )    
+                     )
+
+    def to(self, device : torch.device) -> Light:
+        """ Moves the data tensor, wavelengths container, and spacing container to
+            a different device
+        """
+        self.data = self.data.to(device=device)
+        self.wavelengths = self.wavelengths.to(device=device)
+        self.spacing = self.spacing.to(device=device)
+        return self
         
     def __sub__(self, other) -> Light:
         
