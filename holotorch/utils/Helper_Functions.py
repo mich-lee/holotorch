@@ -281,7 +281,31 @@ def _fft2_inplace_helper(	x : torch.Tensor,
 ################################################################################################################################
 
 
-def generateGrid(res, deltaX, deltaY, centerGrids = True, centerCoordsAroundZero = False, device=None):
+def generateGrid_MultiRes(res : tuple or list, spacingTensor : torch.Tensor, centerGrids : bool = True, centerCoordsAroundZero : bool = False, device : torch.device = None):
+	if (spacingTensor.shape[-1] != 2):
+		raise Exception("The last dimension of 'spacingTensor' must have a size of 2.")
+	if (len(spacingTensor.shape) < 2):
+		spacingTensor = spacingTensor.view(1, 2)
+	
+	N = torch.tensor(spacingTensor.shape[:-1]).prod()
+	xGrid = torch.zeros(N, res[0], res[1], device=device)
+	yGrid = torch.zeros_like(xGrid, device=device)
+	
+	delta = spacingTensor.view(N, 2)
+	for i in range(delta.shape[0]):
+		deltaXTemp = delta[i, 0]
+		deltaYTemp = delta[i, 1]
+		xGridTemp, yGridTemp = generateGrid(res=res, deltaX=deltaXTemp, deltaY=deltaYTemp, centerGrids=centerGrids, centerCoordsAroundZero=centerCoordsAroundZero, device=device)
+		xGrid[i,:,:] = xGridTemp
+		yGrid[i,:,:] = yGridTemp
+
+	xGrid = xGrid.view(spacingTensor.shape[:-1] + torch.Size([res[0], res[1]]))
+	yGrid = yGrid.view(xGrid.shape)
+
+	return xGrid, yGrid
+
+
+def generateGrid(res : tuple or list, deltaX : float, deltaY : float, centerGrids : bool = True, centerCoordsAroundZero : bool = False, device : torch.device = None):
 	if (torch.is_tensor(deltaX)):
 		deltaX = copy.deepcopy(deltaX).squeeze().to(device=device)
 	if (torch.is_tensor(deltaY)):

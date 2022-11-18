@@ -128,7 +128,7 @@ class FT_Lens(CGH_Component):
         #
         dx_output =  wavelengths_expanded * np.abs(focal_length) / dx_input / pixel_shape
         
-        dx_output = SpacingContainer(spacing=dx_output, tensor_dimension=Dimensions.TCD)
+        dx_output = SpacingContainer(spacing=dx_output, tensor_dimension=Dimensions.TCD(n_time=dx_output.shape[0], n_channel=dx_output.shape[1], height=dx_output.shape[2]))
         
         dx_output.set_spacing_center_wavelengths(dx_output_center_wavelengths)
 

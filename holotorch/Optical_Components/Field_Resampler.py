@@ -14,16 +14,17 @@ from holotorch.utils.Helper_Functions import generateGrid, get_center_hw_inds_wr
 
 class Field_Resampler(CGH_Component):
 	def __init__(	self,
-					outputHeight						: int,
-					outputWidth							: int,
-					outputPixel_dx						: float,
-					outputPixel_dy						: float,
-					magnification 						: float = None,
-					amplitudeScaling					: float = None,
-					interpolationMode					: str = 'nearest',
-					device								: torch.device = None,
-					gpu_no								: int = 0,
-					use_cuda							: bool = False
+					outputHeight				: int,
+					outputWidth					: int,
+					outputPixel_dx				: float,
+					outputPixel_dy				: float,
+					magnification 				: float = None,
+					amplitudeScaling			: float = None,
+					interpolationMode			: str = 'nearest',
+					reducePickledSize			: bool = True,
+					device						: torch.device = None,
+					gpu_no						: int = 0,
+					use_cuda					: bool = False
 				) -> None:
 		
 		super().__init__()
@@ -45,18 +46,22 @@ class Field_Resampler(CGH_Component):
 			raise Exception("Bad argument: 'outputPixel_dy' should be a positive real number.")
 
 		self.outputResolution = (outputHeight, outputWidth)
-		self.outputPixel_dx = outputPixel_dx
-		self.outputPixel_dy = outputPixel_dy
 		self.outputSpacing = (outputPixel_dx, outputPixel_dy)
-
 		self.magnification = magnification
 		self.amplitudeScaling = amplitudeScaling
-
 		self.interpolationMode = interpolationMode
+		self._reducePickledSize = reducePickledSize
 		
 		self.grid = None
 		self.prevFieldSpacing = None
 		self.prevFieldSize = None
+
+
+	def __getstate__(self):
+		if self._reducePickledSize:
+			return super()._getreducedstate(fieldsSetToNone=['grid','prevFieldSpacing','prevFieldSize'])
+		else:
+			return super().__getstate__()
 
 
 	@classmethod
@@ -95,7 +100,7 @@ class Field_Resampler(CGH_Component):
 		grid = torch.zeros(self.outputResolution[0], self.outputResolution[1], 2, device=self.device)
 
 		# Can assume that coordinate (0,0) is in the center due to how generateGrid(...) works
-		gridX, gridY = generateGrid(self.outputResolution, self.outputPixel_dx, self.outputPixel_dy, centerGrids=True, centerCoordsAroundZero=True)
+		gridX, gridY = generateGrid(self.outputResolution, self.outputSpacing[0], self.outputSpacing[1], centerGrids=True, centerCoordsAroundZero=True)
 		# gridX = gridX.to(device=self.device)
 		# gridY = gridY.to(device=self.device)
 
@@ -109,14 +114,53 @@ class Field_Resampler(CGH_Component):
 	
 	
 	def forward(self, field : ElectricField):
-		# convert field to 4D tensor for batch processing
-		Bf,Tf,Pf,Cf,Hf,Wf = field.data.shape
-		field_data = field.data.view(Bf*Tf*Pf,Cf,Hf,Wf) # Shape to 4D
-
-		# convert spacing to 4D tensor
 		spacing_data = field.spacing.data_tensor.view(field.spacing.tensor_dimension.get_new_shape(new_dim=Dimension.BTPCHW))
-		Bs,Ts,Ps,Cs,Hs,Ws = spacing_data.shape
-		spacing_data = spacing_data.view(Bs*Ts*Ps,Cs,Hs,Ws)
+
+		singletonSpacingDims = (torch.tensor(spacing_data.shape[:-2]) == 1)
+		otherSpacingDims = ~singletonSpacingDims
+
+		# Getting index numbers and computing number of singleton/non-singleton dimensions.
+		# Converting to long is done to deal with cases where there are no dims
+		#	(no dims --> returned tensor empty when indexing --> tensor defaults to float32 --> cannot use that datatype to index later on; thus need to cast to long.)
+		singletonSpacingDims = torch.arange(4)[singletonSpacingDims].to(dtype=torch.long)
+		otherSpacingDims = torch.arange(4)[otherSpacingDims].to(dtype=torch.long)
+		numSingletonSpacingDims = int(torch.tensor(spacing_data.shape)[singletonSpacingDims].prod())
+		numOtherSpacingDims = int(torch.tensor(spacing_data.shape)[otherSpacingDims].prod())
+
+		# Computing permutation indices
+		permutationInds = otherSpacingDims.tolist() + singletonSpacingDims.tolist() + [4, 5]
+		permutationIndsInverse = torch.zeros(6, dtype=torch.long)
+		permutationIndsInverse[permutationInds] = torch.arange(6, dtype=torch.long)
+		permutationIndsInverse = permutationIndsInverse.tolist()
+
+		# Moving non-singleton B, T, P, and/or C spacing dimensions to the beginning.
+		spacing_data = spacing_data.permute(permutationInds)
+
+		# Combining singleton dimensions into a single dimension (dimension 1).  Combining non-singleton dimensions into a single dimension (dimension 0).
+		# Result is a 4D tensor.
+		spacing_data = spacing_data.view(numOtherSpacingDims, numSingletonSpacingDims, spacing_data.shape[-2], spacing_data.shape[-1])
+
+
+		# Rearranging the field data tensor in a similar manner as the spacing_data tensor.
+		field_data = field.data
+		numSingletonFieldDims = int(torch.tensor(field.data.shape)[singletonSpacingDims].prod())
+		numOtherFieldDims = int(torch.tensor(field.data.shape)[otherSpacingDims].prod())
+		field_data = field_data.permute(permutationInds)
+		field_data = field_data.view(numOtherFieldDims, numSingletonFieldDims, field_data.shape[-2], field_data.shape[-1])
+
+
+		# Storing field data dimension sizes as variables
+		Bf,Tf,Pf,Cf,Hf,Wf = field.data.shape
+
+
+		# # Convert spacing tensor to 4D
+		# Bs,Ts,Ps,Cs,Hs,Ws = spacing_data.shape
+		# spacing_data = spacing_data.view(Bs*Ts*Ps,Cs,Hs,Ws)	# Shape to 4D
+
+		# # convert field to 4D tensor for batch processing
+		# Bf,Tf,Pf,Cf,Hf,Wf = field.data.shape
+		# field_data = field.data.view(Bf*Tf*Pf,Cf,Hf,Wf) # Shape to 4D
+
 
 		buildGridFlag = False
 		if (self.grid is None):
@@ -134,19 +178,21 @@ class Field_Resampler(CGH_Component):
 		if (buildGridFlag):
 			# Calculating stuff for normalizing the output coordinates to the input coordinates
 			xNorm = spacing_data[:,:,0,:] * ((Hf - 1) // 2)
-			xNorm = xNorm[:,:,None,:]
+			xNorm = xNorm[:,:,None,:].squeeze(-1)
 			yNorm = spacing_data[:,:,1,:] * ((Wf - 1) // 2)
-			yNorm = yNorm[:,:,None,:]
+			yNorm = yNorm[:,:,None,:].squeeze(-1)
 
 			# self.grid = self.gridPrototype.repeat(Bf*Tf*Pf,1,1,1)
 			self.grid = self.calculateOutputCoordGrid().to(device=field.data.device)
+			self.grid = self.grid.expand(torch.Size([numOtherSpacingDims]) + self.grid.shape[-3:]).clone()	# The clone() is necessary as we are doing in-place operations on 'grid'.  See the documentation on torch.expand(...) for more details.
 
 			# Stuff is ordered this way because torch.nn.functiona.grid_sample(...) has x as the coordinate in the width direction
 			# and y as the coordinate in the height dimension.  This is the opposite of the convention used by Holotorch.
 			self.grid[... , 0] = self.grid[... , 0] / yNorm
 			self.grid[... , 1] = self.grid[... , 1] / xNorm
 
-			self.grid = self.grid.expand(torch.Size(torch.cat((torch.tensor([Bf*Tf*Pf]), torch.tensor(self.grid.shape)))))
+			# self.grid = self.grid.expand(torch.Size(torch.cat((torch.tensor([Bf*Tf*Pf]), torch.tensor(self.grid.shape)))))
+			self.grid = self.grid.view(torch.Size([numOtherSpacingDims]) + self.grid.shape[-3:])
 
 			if (self.magnification is not None):
 				fieldOriginXInd, fieldOriginYInd = get_center_hw_inds_wrt_ft(field_data)
@@ -165,7 +211,11 @@ class Field_Resampler(CGH_Component):
 		
 		new_data = grid_sample(field_data.real, self.grid, mode=self.interpolationMode, padding_mode='zeros', align_corners=True)
 		new_data = new_data + (1j * grid_sample(field_data.imag, self.grid, mode=self.interpolationMode, padding_mode='zeros', align_corners=True))
-		new_data = new_data.view(Bf,Tf,Pf,Cf,self.outputResolution[0],self.outputResolution[1]) # Reshape to 6D
+
+		tempDims = torch.Size(torch.tensor(field.data.shape)[otherSpacingDims]) + torch.Size(torch.tensor(field.data.shape)[singletonSpacingDims]) + (self.outputResolution[0], self.outputResolution[1])
+		new_data = new_data.view(tempDims).permute(permutationIndsInverse)
+
+		# new_data = new_data.view(Bf,Tf,Pf,Cf,self.outputResolution[0],self.outputResolution[1]) # Reshape to 6D
 
 		if (self.amplitudeScaling is not None):
 			new_data = new_data * self.amplitudeScaling
@@ -173,11 +223,13 @@ class Field_Resampler(CGH_Component):
 		# Assumes that the last dimension of the input field's spacing data tensor contains the x- and y-spacings
 		new_spacing_data = torch.clone(field.spacing.data_tensor)	# Apparently, before clone() was used, new_spacing_data shared a pointer with field.spacing.data_tensor
 																	# This caused unexpected behavior.
-		new_spacing_data[... , 0] = self.outputPixel_dx
-		new_spacing_data[... , 1] = self.outputPixel_dy
+		# new_spacing_data[... , 0] = self.outputSpacing[0]
+		# new_spacing_data[... , 1] = self.outputSpacing[1]
+		# spacing = SpacingContainer(spacing=new_spacing_data, tensor_dimension=field.spacing.tensor_dimension)
+		# spacing.set_spacing_center_wavelengths(spacing.data_tensor)
 
-		spacing = SpacingContainer(spacing=new_spacing_data, tensor_dimension=field.spacing.tensor_dimension)
-		spacing.set_spacing_center_wavelengths(spacing.data_tensor)
+		new_spacing_data = torch.tensor([self.outputSpacing[0], self.outputSpacing[1]]).expand(1,1,2)
+		spacing = SpacingContainer(spacing=new_spacing_data, tensor_dimension=Dimension.TCD(n_time=1, n_channel=1, height=2))
 
 		Eout = 	ElectricField(
 					data = new_data,

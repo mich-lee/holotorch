@@ -44,7 +44,8 @@ class ASM_Prop(CGH_Component):
 					bandlimit_kernel					: bool = True,
 					bandlimit_type						: str = 'exact',
 					bandlimit_kernel_fudge_factor_x		: float = 1.0,
-					bandlimit_kernel_fudge_factor_y		: float = 1.0
+					bandlimit_kernel_fudge_factor_y		: float = 1.0,
+					reducePickledSize					: bool = True
 				):
 		"""
 		Angular Spectrum method with bandlimited ASM from Digital Holographic Microscopy
@@ -147,11 +148,19 @@ class ASM_Prop(CGH_Component):
 													'approx' - Bandlimits the propagation kernel based on Equations 21 and 22 in Band-Limited ASM (Matsushima et al, 2009)
 													'exact' - Bandlimits the propagation kernel based on Equations 18 and 19 in Band-Limited ASM (Matsushima et al, 2009)
 												Note that for aperture sizes that are small compared to the propagation distance, 'approx' and 'exact' will more-or-less the same results.
-												Defaults to 'exact'.
+												Defaults to 'exact'
 			
 			bandlimit_kernel_fudge_factor_x (float, optional):	See source code.  Defaults to 1.0.
 			
 			bandlimit_kernel_fudge_factor_y (float, optional):	See source code.  Defaults to 1.0.
+
+			reducePickledSize (bool, optional):		When this is set to true, certain temporary data is not saved when pickling.
+													Specifically, the following fields are saved with their value set to None:
+														- prop_kernel
+														- prop_kernel_spacing
+														- prop_kernel_wavelengths
+														- prop_kernel_field_shape
+													Defaults to True
 		"""
 
 		if (sign_convention != ENUM_PHASE_SIGN_CONVENTION.TIME_PHASORS_ROTATE_CLOCKWISE):
@@ -201,9 +210,10 @@ class ASM_Prop(CGH_Component):
 		self.memoize_prop_kernel				= memoize_prop_kernel
 		self.do_ffts_inplace					= do_ffts_inplace
 		self.bandlimit_kernel					= bandlimit_kernel
+		self.bandlimit_type						= bandlimit_type
 		self.bandlimit_kernel_fudge_factor_x	= bandlimit_kernel_fudge_factor_x
 		self.bandlimit_kernel_fudge_factor_y	= bandlimit_kernel_fudge_factor_y
-		self.bandlimit_type						= bandlimit_type
+		self._reducePickledSize					= reducePickledSize
 		self.z_opt								= z_opt
 		self.z									= init_distance
 
@@ -213,6 +223,13 @@ class ASM_Prop(CGH_Component):
 		self.prop_kernel_field_shape = None
 
 		self.prevParameters = self.createParameterDict()
+
+
+	def __getstate__(self):
+		if self._reducePickledSize:
+			return super()._getreducedstate(fieldsSetToNone=['prop_kernel','prop_kernel_spacing','prop_kernel_wavelengths', 'prop_kernel_field_shape'])
+		else:
+			return super().__getstate__()
 
 
 	def createParameterDict(self):

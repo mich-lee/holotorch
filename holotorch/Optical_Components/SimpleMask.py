@@ -20,7 +20,7 @@ from holotorch.utils.Enumerators import *
 
 class SimpleMask(AbstractMask):
     def __init__(self,
-            tensor_dimension : TensorDimension               = None,
+            tensor_dimension : TensorDimension,
             init_type : INIT_TYPE                            = INIT_TYPE.ZEROS,
             mask_model_type     : MASK_MODEL_TYPE            = MASK_MODEL_TYPE.REAL,
             mask_forward_type        : MASK_FORWARD_TYPE     = MASK_FORWARD_TYPE.MULTIPLICATIVE,
@@ -34,21 +34,18 @@ class SimpleMask(AbstractMask):
         
         self.tensor_dimension = tensor_dimension
 
-        if tensor_dimension is not None:
-            if init_type == INIT_TYPE.ZEROS:
-                mask = torch.zeros(tensor_dimension.shape)
-            elif init_type == INIT_TYPE.ONES:
-                mask = torch.ones(tensor_dimension.shape)
+        if init_type == INIT_TYPE.ZEROS:
+            mask = torch.zeros(tensor_dimension.shape)
+        elif init_type == INIT_TYPE.ONES:
+            mask = torch.ones(tensor_dimension.shape)
 
-            if mask_model_type == MASK_MODEL_TYPE.COMPLEX:
-                mask = mask + 0j
+        if mask_model_type == MASK_MODEL_TYPE.COMPLEX:
+            mask = mask + 0j
 
-            self.mask = mask
+        self.mask = mask
         
         self.mask_model_type = mask_model_type
-
         self.mask_forward_type = mask_forward_type
-        
         self.spacing = None
         
     def forward(self, field : ElectricField) -> ElectricField:

@@ -45,6 +45,23 @@ class CGH_Component(torch.nn.Module):
     def __setstate__(self, state):
         vars(self).update(state)
         self.renitialize_attributes()
+
+    def _getreducedstate(self, fieldsSetToNone : list = None, fieldsRemoved : list = None):
+        state = vars(self).copy()
+        if fieldsSetToNone is not None:
+            noneFields = fieldsSetToNone.copy()
+        else:
+            noneFields = []
+        if fieldsRemoved is not None:
+            for s in fieldsRemoved:
+                if s in noneFields: # Removal takes precedence over setting to None
+                    noneFields.remove(s)
+                if s in state:
+                    del state[s]
+        for s in noneFields:
+            if s in state:
+                state[s] = None
+        return state
     
     def __str__(self) -> str:
         
