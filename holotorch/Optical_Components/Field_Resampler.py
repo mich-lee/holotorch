@@ -228,7 +228,7 @@ class Field_Resampler(CGH_Component):
 		# spacing = SpacingContainer(spacing=new_spacing_data, tensor_dimension=field.spacing.tensor_dimension)
 		# spacing.set_spacing_center_wavelengths(spacing.data_tensor)
 
-		new_spacing_data = torch.tensor([self.outputSpacing[0], self.outputSpacing[1]]).expand(1,1,2)
+		new_spacing_data = torch.tensor([self.outputSpacing[0], self.outputSpacing[1]], device=field.spacing.data_tensor.device).expand(1,1,2)
 		spacing = SpacingContainer(spacing=new_spacing_data, tensor_dimension=Dimension.TCD(n_time=1, n_channel=1, height=2))
 
 		Eout = 	ElectricField(

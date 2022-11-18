@@ -51,9 +51,7 @@ class ElectricField(Light):
     
     
     def __getitem__(self, keys) -> ElectricField:
-        
         mylight = super().__getitem__(keys)
-        
         return self.like(data=mylight.data)
 
     

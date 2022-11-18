@@ -20,10 +20,11 @@ import matplotlib.pyplot as plt
 from copy import copy
 
 from holotorch.Spectra import Spectrum
+import holotorch.utils.Dimensions as Dimensions
 from holotorch.Spectra.WavelengthContainer import WavelengthContainer
 from holotorch.Spectra.SpacingContainer import SpacingContainer
 from holotorch.utils.ImageSave import imsave
-from holotorch.utils.Helper_Functions import ft2
+from holotorch.utils.Helper_Functions import ft2, generateGrid_MultiRes
 import holotorch.utils.Visualization_Helper as VH
 import holotorch.utils.pjji as piji
 
@@ -254,12 +255,22 @@ class Light():
         return mystr
     
     def __repr__(self):
-        
         mystr = type(self).__module__ 
         mystr += "\nShape of Data Tensor: " + str(self.data.shape)
-
         return mystr
     
+    def get_coordinate_grid(self, device : torch.device = None):
+        if device is None:
+            workingDevice = self.data.device
+        else:
+            workingDevice = device
+        xGrid, yGrid = generateGrid_MultiRes(   res=tuple(self.data.shape[-2:]), spacingTensor=self.spacing.data_tensor,
+                                                centerGrids=True, centerCoordsAroundZero=False, device=workingDevice        )
+        newDim = self.spacing.tensor_dimension.get_new_shape(Dimensions.BTPCHW)[:-2] + torch.Size(self.data.shape[-2:])
+        xGrid = xGrid.view(newDim)
+        yGrid = yGrid.view(newDim)
+        return xGrid, yGrid
+
     @staticmethod
     def zeros(
         size : _size,
