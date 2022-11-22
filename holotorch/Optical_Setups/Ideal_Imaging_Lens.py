@@ -20,6 +20,7 @@ class Ideal_Imaging_Lens(CGH_Component):
 					focal_length			: float,
 					object_dist				: float,
 					interpolationMode		: str = 'nearest',
+					rescaleCoords			: bool = True,
 					device					: torch.device = None,
 					gpu_no					: int = 0,
 					use_cuda				: bool = False
@@ -37,6 +38,7 @@ class Ideal_Imaging_Lens(CGH_Component):
 		self.focal_length = focal_length
 		self.object_dist = object_dist
 		self.interpolationMode = interpolationMode
+		self.rescaleCoords = rescaleCoords
 		self._fieldResampler = None
 
 		self._calculateGeometricOpticsParameters()
@@ -54,15 +56,21 @@ class Ideal_Imaging_Lens(CGH_Component):
 
 	
 	def forward(self, field : ElectricField) -> ElectricField:
-		outputHeight, outputWidth, outputPixel_dx, outputPixel_dy = Field_Resampler._getFieldResamplerParams(targetField=field)
+		inputHeight, inputWidth, inputPixel_dx, inputPixel_dy = Field_Resampler._getFieldResamplerParams(targetField=field)
+		if self.rescaleCoords:
+			outputPixel_dx = inputPixel_dx * abs(self.magnification)
+			outputPixel_dy = inputPixel_dy * abs(self.magnification)
+		else:
+			outputPixel_dx = inputPixel_dx
+			outputPixel_dy = inputPixel_dy
 		if self._fieldResampler is not None:
-			self._fieldResampler.updateTargetOutput(outputHeight, outputWidth, outputPixel_dx, outputPixel_dy)
+			self._fieldResampler.updateTargetOutput(inputHeight, inputWidth, inputPixel_dx, inputPixel_dy)
 		else:
 			self._fieldResampler = Field_Resampler	(
-														outputHeight=outputHeight, outputWidth=outputWidth,
+														outputHeight=inputHeight, outputWidth=inputWidth,
 														outputPixel_dx=outputPixel_dx, outputPixel_dy=outputPixel_dy,
 														magnification=self.magnification,
-														amplitudeScaling=1/np.abs(self.magnification),
+														amplitudeScaling=1/abs(self.magnification),
 														interpolationMode=self.interpolationMode
 													)
 

@@ -442,20 +442,20 @@ class Light():
 
 
     def visualize(self,
-            title : str             =   "",
-            flag_colorbar : bool    = True,
-            flag_axis : str         = False,
-            cmap                    ='gray',
-            index                   = None,
-            open_new_figure         = False,
-            figsize                 = None,
-            vmax                    = None,
-            vmin                    = None,
-            adjust_aspect : bool    = False,
-            rescale_factor : float  = 1.0,
+            title : str                 =   "",
+            flag_colorbar : bool        = True,
+            flag_axis : str             = False,
+            cmap                        ='gray',
+            index                       = None,
+            open_new_figure             = False,
+            figsize                     = None,
+            vmax                        = None,
+            vmin                        = None,
+            adjust_aspect : bool        = False,
+            rescale_factor : float      = 1.0,
+            rescale_mode : str          = None,
+            clamp_range : list or tuple = None
             ):
-        
-
         
         if index is None:
             for k in range(self.num_batches):
@@ -464,12 +464,15 @@ class Light():
                 self[k].visualize_image(
                     vmax = vmax,
                     vmin = vmin,
+                    cmap = cmap,
                     figsize=figsize,
                     flag_colorbar = flag_colorbar,
                     title = title,
                     flag_axis = flag_axis,
                     adjust_aspect=adjust_aspect,
-                    rescale_factor = rescale_factor
+                    rescale_factor = rescale_factor,
+                    rescale_mode = rescale_mode,
+                    clamp_range = clamp_range
                      )
         else:
             out = self[index]
@@ -482,18 +485,22 @@ class Light():
                 flag_axis = flag_axis,
                 adjust_aspect = adjust_aspect,
                 rescale_factor = rescale_factor,
+                rescale_mode = rescale_mode,
+                clamp_range = clamp_range
                     )
     
     def visualize_image(self,
-            title : str             =   "",
-            flag_colorbar : bool    = True,
-            flag_axis : str         = False,
-            cmap                    ='gray',
-            vmax                    = None,
-            vmin                    = None,
-            figsize                 = None,
-            adjust_aspect : bool    = False,
-            rescale_factor  : float = 1.0,
+            title : str                 =   "",
+            flag_colorbar : bool        = True,
+            flag_axis : str             = False,
+            cmap                        ='gray',
+            vmax                        = None,
+            vmin                        = None,
+            figsize                     = None,
+            adjust_aspect : bool        = False,
+            rescale_factor : float      = 1.0,
+            rescale_mode : str          = None,
+            clamp_range : list or tuple = None
             ) -> int:
         """[summary]
 
@@ -504,6 +511,9 @@ class Light():
         Returns:
             int: [description]
         """
+
+        if (clamp_range is not None) and (len(clamp_range) != 2):   # Short-circuiting will prevent len(...) from being called (if 'clamp_range' is None, thus avoiding an error.
+            raise Exception("Invalid value for 'clamp_range'.  'clamp_range' should be a two-element list or tuple.")
         
         if figsize is not None:
             plt.figure(figsize=figsize)
@@ -511,7 +521,11 @@ class Light():
         object = self
 
         if rescale_factor != 1.0:
-            object = object.rescale(rescale_factor)
+            if rescale_mode is None:
+                object = object.rescale(rescale_factor)
+            else:
+                object = object.rescale(rescale_factor, rescale_mode=rescale_mode)
+
         data = object.data.cpu().detach().squeeze()
         
         if data.is_complex():
@@ -548,9 +562,11 @@ class Light():
             if np.isclose(size_x, size_y):
                 aspect = self.height / self.width
                 #aspect = "auto"
-
             else:
                 aspect = 1
+
+        if clamp_range is not None:
+            data = data.clamp(clamp_range[0], clamp_range[1])
 
         if data.ndim == 2:
             _im = plt.imshow(data,
@@ -569,6 +585,7 @@ class Light():
                 
             _im = plt.imshow(
                 data,
+                cmap = cmap,
                 extent = extent,
                 aspect = aspect
                 )
@@ -619,12 +636,18 @@ class Light():
             
         return non_singular_list
 
-    def rescale(self, scale = 0.5):
+    def rescale(self, scale = 0.5, rescale_mode = None):
         from holotorch.Optical_Components.Resize_Field import Resize_Field
 
-        resizer = Resize_Field(
-            scale_factor=scale
-        )
+        if rescale_mode is None:
+            resizer = Resize_Field(
+                scale_factor=scale
+            )
+        else:
+            resizer = Resize_Field(
+                scale_factor=scale,
+                mode=rescale_mode
+            )
 
         out = resizer(self)
         return out

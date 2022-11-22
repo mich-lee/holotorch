@@ -14,6 +14,8 @@ from __future__ import annotations
 import torch
 from torch.types import _size
 
+import numpy as np
+
 from holotorch.CGH_Datatypes.Light import Light
 from holotorch.CGH_Datatypes.IntensityField import IntensityField
 from holotorch.Spectra.WavelengthContainer import WavelengthContainer
@@ -191,12 +193,17 @@ class ElectricField(Light):
                   flag_log : bool = False,
                   adjust_aspect : bool    = False,
                   rescale_factor : float = 1,
+                  rescale_mode : str = None,
+                  clamp_range : list or tuple = None,
+                  clamp_phase : bool = True     # This is for clamping phase to the interval [-pi, pi] (bicubic interpolation when rescale_factor != 1 can cause overshoot outside of that range).
                     ):       
         
         if plot_type is ENUM_PLOT_TYPE.MAGNITUDE:
             new_intensity_field = self.get_intensity()
-        elif plot_type is ENUM_PLOT_TYPE.PHASE: 
+        elif plot_type is ENUM_PLOT_TYPE.PHASE:
             new_intensity_field = self.angle()
+            if (clamp_range is None) and (clamp_phase):
+                clamp_range = (-np.pi, np.pi)
             
         if flag_log == True:
             new_intensity_field = new_intensity_field.log()
@@ -213,6 +220,8 @@ class ElectricField(Light):
             vmin = vmin,
             adjust_aspect = adjust_aspect,
             rescale_factor = rescale_factor,
+            rescale_mode = rescale_mode,
+            clamp_range = clamp_range
         )
 
     def visualize_grid_gif (self,

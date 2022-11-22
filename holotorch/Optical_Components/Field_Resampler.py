@@ -74,16 +74,16 @@ class Field_Resampler(CGH_Component):
 		if (numSpacingElem != 1) and (numSpacingElem != 2):
 			raise Exception("Spacing that differs across B/T/P/C dimensions is not currently supported by this component.")
 		
-		outputPixel_dx = spacing[... , 0].squeeze()
+		inputPixel_dx = spacing[... , 0].squeeze()
 		if numSpacingElem > 1:
-			outputPixel_dy = spacing[... , 1].squeeze()
+			inputPixel_dy = spacing[... , 1].squeeze()
 		else:
-			outputPixel_dy = outputPixel_dx
+			inputPixel_dy = inputPixel_dx
 
-		outputHeight = targetField.data.shape[-2]
-		outputWidth = targetField.data.shape[-1]
+		inputHeight = targetField.data.shape[-2]
+		inputWidth = targetField.data.shape[-1]
 
-		return int(outputHeight), int(outputWidth), float(outputPixel_dx), float(outputPixel_dy)
+		return int(inputHeight), int(inputWidth), float(inputPixel_dx), float(inputPixel_dy)
 
 
 	def updateTargetOutput(self, outputHeight : int, outputWidth : int, outputPixel_dx : float, outputPixel_dy : float):
