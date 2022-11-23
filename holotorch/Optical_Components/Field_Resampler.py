@@ -20,7 +20,7 @@ class Field_Resampler(CGH_Component):
 					outputPixel_dy				: float,
 					magnification 				: float = None,
 					amplitudeScaling			: float = None,
-					interpolationMode			: str = 'nearest',
+					interpolationMode			: str = 'bicubic',
 					reducePickledSize			: bool = True,
 					device						: torch.device = None,
 					gpu_no						: int = 0,
@@ -72,8 +72,9 @@ class Field_Resampler(CGH_Component):
 		if (lastDimSize != 1) and (lastDimSize != 2):
 			raise Exception("Malformed spacing tensor")
 		if (numSpacingElem != 1) and (numSpacingElem != 2):
-			raise Exception("Spacing that differs across B/T/P/C dimensions is not currently supported by this component.")
-		
+			# Spacing differs across B/T/P/C dimension(s).  Averaging.
+			spacing = torch.tensor([spacing[... , 0].mean(), spacing[... , 1].mean()]).expand(1,1,2)
+			
 		inputPixel_dx = spacing[... , 0].squeeze()
 		if numSpacingElem > 1:
 			inputPixel_dy = spacing[... , 1].squeeze()
@@ -111,10 +112,11 @@ class Field_Resampler(CGH_Component):
 
 		# self.gridPrototype = grid.to(device=self.device)
 		return grid
-	
-	
-	def forward(self, field : ElectricField):
-		spacing_data = field.spacing.data_tensor.view(field.spacing.tensor_dimension.get_new_shape(new_dim=Dimension.BTPCHW))
+
+
+	@classmethod
+	def analyzeSpacingContainer(cls, spacing : SpacingContainer):
+		spacing_data = spacing.data_tensor.view(spacing.tensor_dimension.get_new_shape(new_dim=Dimension.BTPCHW))
 
 		singletonSpacingDims = (torch.tensor(spacing_data.shape[:-2]) == 1)
 		otherSpacingDims = ~singletonSpacingDims
@@ -126,6 +128,13 @@ class Field_Resampler(CGH_Component):
 		otherSpacingDims = torch.arange(4)[otherSpacingDims].to(dtype=torch.long)
 		numSingletonSpacingDims = int(torch.tensor(spacing_data.shape)[singletonSpacingDims].prod())
 		numOtherSpacingDims = int(torch.tensor(spacing_data.shape)[otherSpacingDims].prod())
+
+		return spacing_data, singletonSpacingDims, otherSpacingDims, numSingletonSpacingDims, numOtherSpacingDims
+	
+	
+	def forward(self, field : ElectricField):
+		# spacing_data = field.spacing.data_tensor.view(field.spacing.tensor_dimension.get_new_shape(new_dim=Dimension.BTPCHW))
+		spacing_data, singletonSpacingDims, otherSpacingDims, numSingletonSpacingDims, numOtherSpacingDims = Field_Resampler.analyzeSpacingContainer(field.spacing)
 
 		# Computing permutation indices
 		permutationInds = otherSpacingDims.tolist() + singletonSpacingDims.tolist() + [4, 5]

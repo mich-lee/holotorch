@@ -13,8 +13,9 @@
 import torch
 from holotorch.CGH_Datatypes.ElectricField import ElectricField
 from holotorch.Optical_Components.Optical_Aperture import Optical_Aperture
+from holotorch.utils.Helper_Functions import generateGrid_MultiRes
 
-class Radial_Optical_Aperture_Patched(Optical_Aperture):
+class Radial_Optical_Aperture(Optical_Aperture):
 	def __init__(self,
 			aperture_radius : float,
 			off_x : float = 0.0,
@@ -38,21 +39,20 @@ class Radial_Optical_Aperture_Patched(Optical_Aperture):
 
 
 	def forward(self, field : ElectricField) -> ElectricField:
+		# spacing = field.spacing
+		# x = torch.linspace(-0.5,0.5, field.height).to(field.data.device)
+		# y = torch.linspace(-0.5,0.5, field.width).to(field.data.device)
+		# X,Y = torch.meshgrid(x,y)
+		# X = (field.height * spacing.data_tensor[:,:,0] * X[None,None]) - self.off_x
+		# Y = (field.width * spacing.data_tensor[:,:,1] * Y[None,None]) - self.off_y
 
-		spacing = field.spacing
-
-		x = torch.linspace(-0.5,0.5, field.height).to(field.data.device)
-		y = torch.linspace(-0.5,0.5, field.width).to(field.data.device)
-
-		X,Y = torch.meshgrid(x,y)
-
-		X = (field.height * spacing.data_tensor[:,:,0] * X[None,None]) - self.off_x
-		Y = (field.width * spacing.data_tensor[:,:,1] * Y[None,None]) - self.off_y
+		X, Y = generateGrid_MultiRes((field.height, field.width), field.spacing.data_tensor, device=field.data.device)
+		X = X - self.off_x
+		Y = Y - self.off_y
 
 		R = torch.sqrt(X**2 + Y**2)
 
 		self.mask = torch.sigmoid(self.cutoff_slope*(self.aperture_radius - R))
-		self.mask[...,0:10,-10:] = 1
 
 		new_field = field.data * self.mask[None,None,:,:,:,:]
 

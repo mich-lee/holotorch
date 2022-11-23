@@ -19,12 +19,16 @@ class Ideal_Imaging_Lens(CGH_Component):
 	def __init__(	self,
 					focal_length			: float,
 					object_dist				: float,
-					interpolationMode		: str = 'nearest',
-					rescaleCoords			: bool = True,
+					interpolationMode		: str = 'bicubic',
+					rescaleCoords			: bool = False,
+					rescaleFactor			: float = None,
 					device					: torch.device = None,
 					gpu_no					: int = 0,
 					use_cuda				: bool = False
 				) -> None:
+
+		if (rescaleFactor is not None) and (rescaleFactor <= 0):
+			raise Exception("Invalid value for 'rescaleFactor'.  Should be a positive real number.")
 		
 		super().__init__()
 
@@ -39,6 +43,7 @@ class Ideal_Imaging_Lens(CGH_Component):
 		self.object_dist = object_dist
 		self.interpolationMode = interpolationMode
 		self.rescaleCoords = rescaleCoords
+		self.rescaleFactor = rescaleFactor
 		self._fieldResampler = None
 
 		self._calculateGeometricOpticsParameters()
@@ -58,13 +63,17 @@ class Ideal_Imaging_Lens(CGH_Component):
 	def forward(self, field : ElectricField) -> ElectricField:
 		inputHeight, inputWidth, inputPixel_dx, inputPixel_dy = Field_Resampler._getFieldResamplerParams(targetField=field)
 		if self.rescaleCoords:
-			outputPixel_dx = inputPixel_dx * abs(self.magnification)
-			outputPixel_dy = inputPixel_dy * abs(self.magnification)
+			if self.rescaleFactor is None:
+				outputPixel_dx = inputPixel_dx * abs(self.magnification)
+				outputPixel_dy = inputPixel_dy * abs(self.magnification)
+			else:
+				outputPixel_dx = inputPixel_dx * self.rescaleFactor
+				outputPixel_dy = inputPixel_dy * self.rescaleFactor
 		else:
 			outputPixel_dx = inputPixel_dx
 			outputPixel_dy = inputPixel_dy
 		if self._fieldResampler is not None:
-			self._fieldResampler.updateTargetOutput(inputHeight, inputWidth, inputPixel_dx, inputPixel_dy)
+			self._fieldResampler.updateTargetOutput(inputHeight, inputWidth, outputPixel_dx, outputPixel_dy)
 		else:
 			self._fieldResampler = Field_Resampler	(
 														outputHeight=inputHeight, outputWidth=inputWidth,
