@@ -1,6 +1,6 @@
 ![HoloFork Logo](/HoloforkLogo.png "HoloFork Logo")
 ----------
-This is a fork of the Holotorch repo.
+This is a fork of the Holotorch repo used by Michael Lee.  This repo was forked from the mid-2022 release of Holotorch.  It contains various additions and bugfixes.
 
  
  
