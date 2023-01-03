@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# By Michael L. : just exclude these
+/HoloforkLogo.png
+/HoloforkLogo.psd
+
 # By Florian S. : just make sure this are excluded
 /results
 /fig_results
