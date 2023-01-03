@@ -1,5 +1,5 @@
-# Holofork
-
+![HoloFork Logo](/HoloforkLogo.png "HoloFork Logo")
+----------
 This is a fork of the Holotorch repo.
 
  
