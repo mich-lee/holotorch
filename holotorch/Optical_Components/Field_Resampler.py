@@ -155,6 +155,8 @@ class Field_Resampler(CGH_Component):
 		numSingletonFieldDims = int(torch.tensor(field.data.shape)[singletonSpacingDims].prod())
 		numOtherFieldDims = int(torch.tensor(field.data.shape)[otherSpacingDims].prod())
 		field_data = field_data.permute(permutationInds)
+		if not field_data.is_contiguous():
+			field_data = field_data.contiguous()
 		field_data = field_data.view(numOtherFieldDims, numSingletonFieldDims, field_data.shape[-2], field_data.shape[-1])
 
 
