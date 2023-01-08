@@ -20,6 +20,7 @@ import warnings
 import copy
 
 from holotorch.Optical_Components.CGH_Component import CGH_Component
+from holotorch.Optical_Propagators.Propagator import Propagator
 import holotorch.utils.Dimensions as Dimensions
 from holotorch.CGH_Datatypes.ElectricField import ElectricField
 from holotorch.utils.Helper_Functions import ft2, ift2, fft2_inplace, ifft2_inplace
@@ -27,7 +28,7 @@ from holotorch.utils.Enumerators import *
 import holotorch.utils.Memory_Utils as Memory_Utils
 
 
-class ASM_Prop(CGH_Component):
+class ASM_Prop(Propagator):
 
 	def __init__(	self,
 					init_distance						: float = 0.0,

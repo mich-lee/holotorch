@@ -550,7 +550,10 @@ class Light():
                 size_x = size_x / unit_val
                 size_y = size_y / unit_val
 
-                extent = [-size_y, size_y, -size_x, size_x]
+                # Doing it this way because in HoloTorch, rows/columns correspond to x/y on the plot, and the [...,0,0] index corresponds to negative x and y.
+                #   Will flip the axis later with `invert_yaxis()`` to ensure that positive y-coordinates (in the plot) are on the top.
+                extent = [-size_y, size_y, size_x, -size_x]
+                    # OLD: extent = [-size_y, size_y, -size_x, size_x]
         else:
             extent = None
             size_x = self.height
@@ -607,6 +610,9 @@ class Light():
 
         if figsize is not None:
             plt.tight_layout()
+
+        # Flipping so the y-coordinates on the plot are right side up
+        plt.gca().invert_yaxis()
         
         
 

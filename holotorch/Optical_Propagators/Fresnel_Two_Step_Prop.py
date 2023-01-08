@@ -6,20 +6,23 @@ import matplotlib.pyplot as plt
 
 import copy
 
-from holotorch.Spectra.SpacingContainer import SpacingContainer
-from holotorch.Optical_Components.CGH_Component import CGH_Component
+# from holotorch.Spectra.SpacingContainer import SpacingContainer
+# from holotorch.Optical_Components.CGH_Component import CGH_Component
+from holotorch.Optical_Propagators.Propagator import Propagator
 import holotorch.utils.Dimensions as Dimensions
 from holotorch.CGH_Datatypes.ElectricField import ElectricField
 from holotorch.utils.Enumerators import *
 
-from holotorch_addons.HelperFunctions import applyFilterToElectricField, get_field_slice, print_cuda_memory_usage, get_tensor_size_bytes, generateGrid, fit_image_to_resolution
-from holotorch_addons.Field_Resampler import Field_Resampler
+from holotorch.utils.Helper_Functions import generateGrid, fit_image_to_resolution
+from holotorch.utils.Field_Utils import applyFilterToElectricField, get_field_slice
+from holotorch.utils.Memory_Utils import print_cuda_memory_usage, get_tensor_size_bytes
+from holotorch.Optical_Components.Field_Resampler import Field_Resampler
 
 
 # This class allows for propagation between two SQUARE-SHAPED planes of different sides and the same number of samples.
 #	- SOURCE: Based off of the Fresnel two-step propagator described in Appendix of "Computational Fourier Optics: A MATLAB Tutorial" by David Voelz.
 #				MATLAB code in that reference was adapted for Python/PyTorch.
-class Fresnel_Two_Step_Prop(CGH_Component):
+class Fresnel_Two_Step_Prop(Propagator):
 	def __init__(	self,
 					M							: int,
 					delta1						: float,

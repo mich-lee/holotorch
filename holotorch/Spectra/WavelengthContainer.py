@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 
 from holotorch.utils.Dimensions import *
+from holotorch.utils.units import * # E.g. to get nm, um, mm etc.
 
 class WavelengthContainer(nn.Module):
     
