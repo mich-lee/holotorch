@@ -14,7 +14,7 @@ This is a fork of the [Holotorch repo](https://github.com/facebookresearch/holot
 
  
 
- The text below was taken from the README.md of the mid-2022 release of Holotorch.
+ The text below was taken from the README.md of the mid-2022 commit of Holotorch.
  
 ----------
 
