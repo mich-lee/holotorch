@@ -1,23 +1,3 @@
-![HoloFork Logo](/HoloforkLogo.png "HoloFork Logo")
-----------
-This is a fork of the [Holotorch repo](https://github.com/facebookresearch/holotorch).  This repo was forked from the mid-2022 commit of Holotorch (Commit cf1a80b3172684520b266cf03f9ba0163b5c1826).  It contains various additions and bugfixes.
-
- 
- 
- 
-
- 
-
- 
-
- 
-
- 
-
- The text below was taken from the README.md of the mid-2022 commit of Holotorch.
- 
-----------
-
 # Holotorch
 
 Holotorch is a Fourier Optics / Coherent Imaging framework developped in PyTorch and PyTorch lightning.
